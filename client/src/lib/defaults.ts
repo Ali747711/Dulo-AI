@@ -165,4 +165,87 @@ export const DEFAULT_TOOLS: ToolDef[] = [
     enabled: true,
     parameters: objectSchema({}),
   },
+  {
+    name: "generate_password",
+    description: "Generate a cryptographically secure random password with configurable options.",
+    category: "utility",
+    enabled: true,
+    parameters: objectSchema({
+      length: { type: "number", default: 16 },
+      includeUppercase: { type: "boolean", default: true },
+      includeLowercase: { type: "boolean", default: true },
+      includeNumbers: { type: "boolean", default: true },
+      includeSymbols: { type: "boolean", default: true },
+      excludeSimilar: { type: "boolean", default: false },
+    }),
+  },
+  {
+    name: "file_compress",
+    description: "Compress a file using gzip or deflate within project root.",
+    category: "files",
+    enabled: true,
+    parameters: objectSchema(
+      {
+        inputPath: { type: "string" },
+        outputPath: { type: "string" },
+        algorithm: { type: "string", enum: ["gzip", "deflate"] },
+      },
+      ["inputPath", "outputPath"]
+    ),
+  },
+  {
+    name: "file_extract",
+    description: "Extract a gzip or deflate compressed file within project root.",
+    category: "files",
+    enabled: true,
+    parameters: objectSchema(
+      {
+        inputPath: { type: "string" },
+        outputPath: { type: "string" },
+        algorithm: { type: "string", enum: ["gzip", "deflate"] },
+      },
+      ["inputPath", "outputPath"]
+    ),
+  },
+  {
+    name: "dns_lookup",
+    description: "Perform DNS lookups for a domain (A, AAAA, MX, NS, TXT, SRV, CNAME, ANY).",
+    category: "network",
+    enabled: true,
+    parameters: objectSchema(
+      {
+        hostname: { type: "string" },
+        recordType: { type: "string", enum: ["A", "AAAA", "MX", "NS", "TXT", "SRV", "CNAME", "ANY"] },
+      },
+      ["hostname"]
+    ),
+  },
+  {
+    name: "ping",
+    description: "Check if a host is reachable via TCP connection (port 80 or 443).",
+    category: "network",
+    enabled: true,
+    parameters: objectSchema(
+      {
+        host: { type: "string" },
+        port: { type: "number", default: 80 },
+        timeout: { type: "number", default: 5000 },
+      },
+      ["host"]
+    ),
+  },
+  {
+    name: "port_check",
+    description: "Check if a specific TCP port is open on a host.",
+    category: "network",
+    enabled: true,
+    parameters: objectSchema(
+      {
+        host: { type: "string" },
+        port: { type: "number" },
+        timeout: { type: "number", default: 3000 },
+      },
+      ["host", "port"]
+    ),
+  },
 ]

@@ -109,31 +109,57 @@ export async function runAgent(
 
     // Case 1: the model wants to call tools
     if (response.tool_calls && response.tool_calls.length > 0) {
+      // Emit tool.call events upfront so UI shows pending state for all calls
       for (const toolCall of response.tool_calls) {
-        const toolName = toolCall.function.name;
-        const callId = toolCall.id;
-        const t0 = Date.now();
-        const { args, outcome } = await executeTool(
-          tools,
-          toolName,
-          toolCall.function.arguments,
-        );
-        // Emit the call once args are parsed so the UI shows what was requested
-        onEvent({ type: "tool.call", step, callId, tool: toolName, args });
+        let args: Record<string, unknown>;
+        try {
+          args = parseArgs(toolCall.function.arguments);
+        } catch {
+          args = { raw: toolCall.function.arguments };
+        }
         onEvent({
-          type: "tool.result",
+          type: "tool.call",
           step,
-          callId,
-          tool: toolName,
-          result: outcome.result,
-          durationMs: Date.now() - t0,
-          isError: outcome.isError,
+          callId: toolCall.id,
+          tool: toolCall.function.name,
+          args,
         });
+      }
+
+      // Execute tool calls concurrently
+      const outcomes = await Promise.all(
+        response.tool_calls.map(async (toolCall) => {
+          const toolName = toolCall.function.name;
+          const callId = toolCall.id;
+          const t0 = Date.now();
+          const { outcome } = await executeTool(
+            tools,
+            toolName,
+            toolCall.function.arguments,
+          );
+          onEvent({
+            type: "tool.result",
+            step,
+            callId,
+            tool: toolName,
+            result: outcome.result,
+            durationMs: Date.now() - t0,
+            isError: outcome.isError,
+          });
+          return {
+            callId,
+            name: toolName,
+            content: outcome.result,
+          };
+        }),
+      );
+
+      for (const item of outcomes) {
         messages.push({
           role: "tool",
-          tool_call_id: callId,
-          name: toolName,
-          content: outcome.result,
+          tool_call_id: item.callId,
+          name: item.name,
+          content: item.content,
         });
       }
       continue;
