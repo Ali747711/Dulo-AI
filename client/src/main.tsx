@@ -7,6 +7,7 @@ import { HealthProvider } from "@/components/health-provider"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { SessionStoreProvider } from "@/lib/session-store"
 import { StoreProvider } from "@/lib/store"
 
 createRoot(document.getElementById("root")!).render(
@@ -14,10 +15,12 @@ createRoot(document.getElementById("root")!).render(
     <ThemeProvider>
       <TooltipProvider>
         <StoreProvider>
-          <HealthProvider>
-            <App />
-            <Toaster />
-          </HealthProvider>
+          <SessionStoreProvider>
+            <HealthProvider>
+              <App />
+              <Toaster />
+            </HealthProvider>
+          </SessionStoreProvider>
         </StoreProvider>
       </TooltipProvider>
     </ThemeProvider>
