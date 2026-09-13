@@ -12,6 +12,16 @@ import type { Tool } from "./types.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const CLIENT_ORIGIN = process.env.DULO_CLIENT_ORIGIN ?? "http://localhost:5173";
+/**
+ * Where session data lives. Unset = `sessions/` under the working directory,
+ * which is what a normal run uses. A second harness started for testing MUST
+ * set this: PORT alone does not isolate anything, because the store's default
+ * root is derived from cwd, so two instances started from the same checkout
+ * share one directory — and a scratch instance's "clean up the sessions I
+ * made" step then deletes the real instance's conversations too. That is not
+ * hypothetical: it destroyed this project's own session history once.
+ */
+const SESSIONS_DIR = process.env.DULO_SESSIONS_DIR;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": CLIENT_ORIGIN,
@@ -24,7 +34,7 @@ const json = (res: ServerResponse, status: number, body: unknown): void => {
   res.end(JSON.stringify(body));
 };
 
-const runner = createRunner(new FileSessionStore());
+const runner = createRunner(new FileSessionStore(SESSIONS_DIR));
 
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -110,6 +120,9 @@ const start = async () => {
   server.listen(PORT, () => {
     console.log(`Dulo harness API listening on http://localhost:${PORT}`);
     console.log(`Allowing browser origin ${CLIENT_ORIGIN}`);
+    // Printed on every start so a second instance pointed at the real data
+    // directory is obvious before it writes anything, not after.
+    console.log(`Sessions stored in ${SESSIONS_DIR ?? "sessions/ (default)"}`);
     if (!process.env.OPENROUTER_API_KEY) {
       console.warn("Warning: OPENROUTER_API_KEY is not set, runs will fail");
     }

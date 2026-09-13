@@ -834,7 +834,7 @@ http.createServer((req, res) => {
 EOF
 tmux kill-session -t dulo-plan4 2>/dev/null
 tmux new-session -d -s dulo-plan4 "node tmp-stub.cjs"
-tmux new-window -t dulo-plan4 "PORT=3099 OPENROUTER_API_KEY=test OPENROUTER_URL=http://127.0.0.1:4593/x npx tsx src/server.ts"
+tmux new-window -t dulo-plan4 "PORT=3099 DULO_SESSIONS_DIR=/tmp/dulo-plan4-sessions OPENROUTER_API_KEY=test OPENROUTER_URL=http://127.0.0.1:4593/x npx tsx src/server.ts"
 tmux new-window -t dulo-plan4 "cd client && npx vite --port 5174"
 sleep 5
 curl -s http://127.0.0.1:3099/api/health | head -c 60; echo
@@ -900,8 +900,15 @@ width.
 ```bash
 tmux kill-session -t dulo-plan4
 rm -f tmp-stub.cjs
-rm -rf sessions
+rm -rf /tmp/dulo-plan4-sessions
 ```
+
+**Never `rm -rf sessions` in the repo root.** That directory belongs to whatever
+harness is running from this checkout — including the owner's own long-running one on
+:3001 — because the store's root defaults to `sessions/` under the working directory
+and `PORT` does not isolate it. Deleting it destroyed this project's real conversation
+history once already (see `context.md` §5). The scratch harness above writes to
+`DULO_SESSIONS_DIR=/tmp/dulo-plan4-sessions`, so only that throwaway path is removed.
 
 Reset Settings' API URL to `http://localhost:3001` if changed.
 

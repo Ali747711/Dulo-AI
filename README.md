@@ -213,6 +213,7 @@ npm start -- "What time is it and how many files are in src?"
 | `OPENROUTER_URL` | No | `https://openrouter.ai/api/v1/chat/completions` | OpenRouter endpoint (or local testing stub) |
 | `PORT` | No | `3001` | Harness HTTP / SSE server port |
 | `DULO_CLIENT_ORIGIN` | No | `http://localhost:5173` | Allowed browser origin for CORS |
+| `DULO_SESSIONS_DIR` | No | `sessions/` under the working directory | Where conversations are stored. **A second harness started for testing must set this to a throwaway directory** — a different `PORT` does not isolate data, so two instances started from the same checkout otherwise share one folder |
 
 ---
 
