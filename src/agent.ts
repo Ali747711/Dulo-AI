@@ -1,5 +1,5 @@
 // src/agent.ts
-import { callLLM } from "./llm.js";
+import { callLLM, MODEL } from "./llm.js";
 import { applyToolPolicy } from "./agents.js";
 import { getAgent, getRegistry } from "./registry.js";
 import type { RunEvent, RunResult, RunUsage } from "./events.js";
@@ -179,10 +179,23 @@ const executeTool = async (
   }
 };
 
-export async function runAgent(
-  userQuery: string,
-  options: RunOptions = {},
-): Promise<RunResult> {
+/** Everything a turn needs decided before the loop starts. */
+export interface RunConfig {
+  model: string;
+  agent?: string;
+  temperature?: number;
+  maxSteps: number;
+  tools: Tool[];
+  systemPrompt: string;
+}
+
+/**
+ * Explicit options win over the agent profile, which wins over the defaults.
+ * Throws for an unknown agent name so callers can turn it into a 400.
+ */
+export const resolveRunConfig = (
+  options: Pick<RunOptions, "tools" | "agent" | "model" | "temperature" | "maxSteps">,
+): RunConfig => {
   const registry = getRegistry();
   const profile = options.agent ? getAgent(options.agent) : undefined;
   if (options.agent && !profile) {
@@ -192,19 +205,30 @@ export async function runAgent(
       }`,
     );
   }
+  return {
+    model: options.model ?? profile?.model ?? MODEL,
+    agent: profile?.name,
+    temperature: options.temperature ?? profile?.temperature,
+    maxSteps: options.maxSteps ?? profile?.maxSteps ?? DEFAULT_MAX_STEPS,
+    tools: applyToolPolicy(options.tools ?? registry.tools, profile?.tools),
+    // A profile's body replaces the prompt entirely; the skills catalogue is
+    // appended either way so load_skill is discoverable.
+    systemPrompt: (profile?.prompt ?? SYSTEM_PROMPT) + registry.skillsPrompt,
+  };
+};
 
+/**
+ * Run the agent loop over an already-built history. `history[0]` must be the
+ * system message; the last entry is the message the model should respond to.
+ * This is the primitive; runAgent below is the one-shot convenience.
+ */
+export async function runTurn(
+  history: Message[],
+  options: RunOptions = {},
+): Promise<RunResult> {
+  const config = resolveRunConfig(options);
+  const { model, temperature, maxSteps, tools } = config;
   const { onEvent = () => {}, signal, requestPermission } = options;
-  // Explicit options win over the profile, which wins over the defaults.
-  const model = options.model ?? profile?.model;
-  const temperature = options.temperature ?? profile?.temperature;
-  const maxSteps = options.maxSteps ?? profile?.maxSteps ?? DEFAULT_MAX_STEPS;
-  const tools = applyToolPolicy(
-    options.tools ?? registry.tools,
-    profile?.tools,
-  );
-  // A profile's body replaces the prompt entirely; the skills catalogue is
-  // appended either way so load_skill is discoverable.
-  const systemPrompt = (profile?.prompt ?? SYSTEM_PROMPT) + registry.skillsPrompt;
 
   const startedAt = Date.now();
   const elapsed = () => Date.now() - startedAt;
@@ -217,10 +241,8 @@ export async function runAgent(
     usage.totalTokens += u.totalTokens;
   };
   const seen = () => (usage.totalTokens > 0 ? usage : undefined);
-  const messages: Message[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userQuery },
-  ];
+
+  const messages: Message[] = [...history];
 
   for (let step = 1; step <= maxSteps; step++) {
     if (signal?.aborted) {
@@ -400,4 +422,20 @@ export async function runAgent(
     durationMs: elapsed(),
     usage: seen(),
   };
+}
+
+/** One-shot: a fresh conversation with a single user message. Used by the CLI. */
+export async function runAgent(
+  userQuery: string,
+  options: RunOptions = {},
+): Promise<RunResult> {
+  const config = resolveRunConfig(options);
+  return runTurn(
+    [
+      { role: "system", content: config.systemPrompt },
+      { role: "user", content: userQuery },
+    ],
+    { ...options, agent: undefined, tools: config.tools, model: config.model,
+      temperature: config.temperature, maxSteps: config.maxSteps },
+  );
 }

@@ -121,6 +121,11 @@ export type RunEvent =
       query: string
       model: string
       startedAt: string
+      /** Set when the run is a turn inside a session. runId === turnId. */
+      sessionId?: string
+      turnId?: string
+      userMessageId?: string
+      assistantMessageId?: string
     }
   | { type: "step.start"; step: number }
   | {
@@ -171,4 +176,6 @@ export type RunEvent =
       usage?: RunUsage
       durationMs: number
       steps: number
+      sessionId?: string
+      turnId?: string
     }
