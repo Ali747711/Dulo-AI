@@ -83,6 +83,31 @@ export const renameSession = async (
   return (await res.json()) as Session
 }
 
+/**
+ * Switch the session's current branch. The harness resolves `messageId` to that
+ * branch's latest leaf — pointing at any message on a branch shows the whole
+ * branch through to its most recent answer. Refuses (409) while a turn is running.
+ */
+export const moveHead = async (
+  base: string,
+  sessionId: string,
+  messageId: string
+): Promise<Session> => {
+  const res = await call(base, `/api/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify({ headId: messageId }),
+  })
+  if (res.status === 409) {
+    const text = await res.text().catch(() => "")
+    throw new Error(
+      `Cannot switch branch — a turn is running${text ? `: ${text}` : ""}`
+    )
+  }
+  const session = await expectOk(res, "branch switch")
+  return (await session.json()) as Session
+}
+
 export const deleteSession = async (
   base: string,
   id: string
@@ -100,12 +125,17 @@ export type SendOutcome =
 export const sendMessage = async (
   base: string,
   sessionId: string,
-  text: string
+  text: string,
+  /** Omitted = current head. null = force a new root. A specific id = branch from there. */
+  options?: { parentId?: string | null }
 ): Promise<SendOutcome> => {
   const res = await call(base, `/api/sessions/${sessionId}/messages`, {
     method: "POST",
     headers: jsonHeaders,
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({
+      text,
+      ...(options?.parentId !== undefined ? { parentId: options.parentId } : {}),
+    }),
   })
   if (res.status === 202)
     return {
