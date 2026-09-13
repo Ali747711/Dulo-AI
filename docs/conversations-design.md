@@ -5,7 +5,7 @@ conversational agent — multi-turn sessions with memory, a message queue,
 branching, attachments, and per-turn model choice. Written for the agent that
 will implement it; the ordered task list lives in `conversations-plan.md`.
 
-Status: approved 2026-09-13. Plan 1 written (`conversations-plan.md`); implementation not started. Owner: Ali. Author: Claude.
+Status: approved 2026-09-13. Plan 1 (session core) implemented 2026-09-13. Owner: Ali. Author: Claude.
 
 ---
 

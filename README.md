@@ -218,7 +218,13 @@ The harness exposes a clean HTTP and Server-Sent Events API:
 | `GET` | `/api/tools` | Tool names, descriptions, and JSON Schema parameters |
 | `GET` | `/api/agents` | Named agent profiles loaded from `src/agents/` |
 | `GET` | `/api/skills` | Skill names and descriptions loaded from `src/skills/` |
-| `POST` | `/api/run` | Executes an agent run; streams Server-Sent Events |
+| `GET`/`POST` | `/api/sessions` | List sessions, newest first / create a new session |
+| `GET`/`PATCH`/`DELETE` | `/api/sessions/:id` | Fetch a session's full tree / rename or move its head / delete it |
+| `POST` | `/api/sessions/:id/messages` | Send a message and start a turn over the session's projected history |
+| `GET` | `/api/sessions/:id/events?after=N` | Reattach to a session's live event stream, or replay it, from sequence `N` |
+| `POST` | `/api/sessions/:id/cancel` | Cancel the session's running turn |
+| `POST` | `/api/sessions/:id/permission/:requestId` | Answer a pending permission request for the session's running turn |
+| `POST` | `/api/run` | Executes an agent run; streams Server-Sent Events. Creates a session and runs one turn; kept for the TUI and older clients. |
 | `GET` | `/api/runs` | Run history recorded by the harness, newest first |
 | `GET` | `/api/run/:id/stream?after=N` | Reattach to a live run, or replay a finished one, from sequence `N` |
 | `POST` | `/api/run/:id/cancel` | Cancel a run in progress |
@@ -248,11 +254,14 @@ Streams `RunEvent` SSE chunks, each carrying a monotonic `seq`:
 ### Runs outlive their connection
 
 A run belongs to the harness, not to the HTTP response that started it. Closing the tab
-detaches the viewer; the run keeps going. Every event is appended to `runs/<id>.jsonl`
-with a sequence number, so a client that drops can reconnect with
-`GET /api/run/:id/stream?after=<last seq>` and resume without gaps or duplicates. This
+detaches the viewer; the run keeps going. Every event is appended to
+`sessions/<id>/events.jsonl` with a sequence number, so a client that drops can reconnect
+with `GET /api/run/:id/stream?after=<last seq>` and resume without gaps or duplicates. This
 survives a browser refresh or a lost connection — not a restart of the harness process
-itself, which takes the running agent loop with it.
+itself, which takes the running agent loop with it. A session's event stream stays open
+across turns — it only ends when the client closes it or the harness shuts down; the
+legacy `/api/run/:id/stream` closes itself once that one turn's `run.end` arrives, since
+older clients expect a run to be one-shot.
 
 ---
 
