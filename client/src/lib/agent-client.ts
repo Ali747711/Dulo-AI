@@ -14,10 +14,10 @@ export interface RunRequest {
 export const CONNECTION_HINT =
   "Start the harness API with `npm run serve` in the harness folder."
 
-const endpoint = (base: string, path: string): string =>
+export const endpoint = (base: string, path: string): string =>
   `${base.replace(/\/+$/, "")}${path}`
 
-const describeFailure = (error: unknown): string => {
+export const describeFailure = (error: unknown): string => {
   if (error instanceof TypeError) {
     // fetch rejects with TypeError when the server is unreachable
     return `Cannot reach the harness. ${CONNECTION_HINT}`
@@ -49,17 +49,20 @@ export const fetchTools = async (base: string): Promise<ServerTool[]> => {
 }
 
 /** Parse `data:` lines out of one SSE message and forward them. */
-const forwardEvents = (chunk: string, onEvent: (event: RunEvent) => void) => {
+export const forwardEvents = <T>(
+  chunk: string,
+  onEvent: (event: T) => void
+) => {
   for (const line of chunk.split("\n")) {
     if (!line.startsWith("data:")) continue
-    onEvent(JSON.parse(line.slice(5).trim()) as RunEvent)
+    onEvent(JSON.parse(line.slice(5).trim()) as T)
   }
 }
 
 /** Drain one SSE body, forwarding every event until the stream ends. */
-const drain = async (
+export const drain = async <T>(
   body: ReadableStream<Uint8Array>,
-  handle: (event: RunEvent) => void
+  handle: (event: T) => void
 ): Promise<void> => {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -70,19 +73,19 @@ const drain = async (
     buffer += decoder.decode(value, { stream: true })
     let boundary = buffer.indexOf("\n\n")
     while (boundary !== -1) {
-      forwardEvents(buffer.slice(0, boundary), handle)
+      forwardEvents<T>(buffer.slice(0, boundary), handle)
       buffer = buffer.slice(boundary + 2)
       boundary = buffer.indexOf("\n\n")
     }
   }
-  if (buffer.trim()) forwardEvents(buffer, handle)
+  if (buffer.trim()) forwardEvents<T>(buffer, handle)
 }
 
 const RECONNECT_BASE_MS = 1000
 const RECONNECT_MAX_MS = 30_000
 const MAX_RECONNECTS = 8
 
-const wait = (ms: number, signal: AbortSignal): Promise<void> =>
+export const wait = (ms: number, signal: AbortSignal): Promise<void> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort)
@@ -141,7 +144,11 @@ export const streamRun = async (
 
   // The stream ended without run.end, so the connection dropped rather than the
   // run finishing. Reattach where we left off.
-  for (let attempt = 0; !ended && runId && attempt < MAX_RECONNECTS; attempt++) {
+  for (
+    let attempt = 0;
+    !ended && runId && attempt < MAX_RECONNECTS;
+    attempt++
+  ) {
     if (signal.aborted) break
     await wait(
       Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS),
