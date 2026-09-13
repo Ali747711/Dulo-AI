@@ -136,7 +136,7 @@ filesystem server. Shipped with MCP off by default — see the security note bel
 The real lesson from opencode's plugin system is that underneath the Effect machinery it is just
 **glob a folder, `import()` each file, read a default export**. Everything else is Markdown.
 
-**5.1 `tools/custom/*.ts`** — glob and `await import(pathToFileURL(f).href)` at startup, require a
+**5.1 `src/tools/custom/*.ts`** — glob and `await import(pathToFileURL(f).href)` at startup, require a
 default export matching the existing `Tool` type, try/catch each so one bad file doesn't kill the
 harness. `tsx` already runs TS at runtime, so there is no build step. Dulo's `Tool` type is
 *already* as simple as opencode's — the gap is only discovery.
@@ -145,12 +145,12 @@ harness. `tsx` already runs TS at runtime, so there is no build step. Dulo's `To
 `src/tools/index.ts`. Deliberately skip opencode's global-dir + walk-up-to-root merge; Dulo is one
 repo for one developer.
 
-**5.3 `skills/*.md`** — the pattern worth stealing: only the frontmatter `name` + `description`
+**5.3 `src/skills/*.md`** — the pattern worth stealing: only the frontmatter `name` + `description`
 ever reaches the system prompt; the body loads on demand through a `load_skill({name})` tool. That
 is how you add situational instructions without paying for them on every request. Parse with
 `gray-matter` (what opencode uses).
 
-**5.4 `agents/*.md`** — frontmatter (`model?`, `tools?` with `"*": false` meaning deny-by-default)
+**5.4 `src/agents/*.md`** — frontmatter (`model?`, `tools?` with `"*": false` meaning deny-by-default)
 plus a body that replaces `SYSTEM_PROMPT`. Lets a named persona be committed to the repo instead
 of re-specified by the client on every call.
 

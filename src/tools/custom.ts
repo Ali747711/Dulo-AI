@@ -1,6 +1,6 @@
 // src/tools/custom.ts
-// Drop a .ts file in tools/custom/ that default-exports a Tool (or an array of
-// them) and it is registered at startup. No build step, no registration list:
+// Drop a .ts file in src/tools/custom/ that default-exports a Tool (or an array
+// of them) and it is registered at startup. No build step, no registration list:
 // tsx already runs TypeScript at runtime. This is the whole of Dulo's plugin
 // system, and the Tool type was already as simple as it needed to be — the gap
 // was only discovery.
@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 
 import type { Tool } from "../types.js";
 
-export const CUSTOM_TOOLS_DIR = "tools/custom";
+export const CUSTOM_TOOLS_DIR = "src/tools/custom";
 
 const LOADABLE = /\.(ts|mts|js|mjs)$/;
 
@@ -28,7 +28,7 @@ const isTool = (value: unknown): value is Tool => {
 };
 
 /**
- * Load every tool module in tools/custom/. One bad file is skipped with a
+ * Load every tool module in src/tools/custom/. One bad file is skipped with a
  * warning rather than stopping the harness: a broken plugin should not make
  * the whole agent unavailable.
  */

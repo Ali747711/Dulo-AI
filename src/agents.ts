@@ -1,12 +1,12 @@
 // src/agents.ts
-// A named agent is a Markdown file in agents/: frontmatter overrides the model
-// and narrows the tool list, the body replaces the system prompt. That makes a
-// persona something you commit to the repo instead of re-specifying on every
-// API call.
+// A named agent is a Markdown file in src/agents/: frontmatter overrides the
+// model and narrows the tool list, the body replaces the system prompt. That
+// makes a persona something you commit to the repo instead of re-specifying on
+// every API call.
 import type { Tool } from "./types.js";
 import { loadMarkdownDir } from "./markdown.js";
 
-export const AGENTS_DIR = "agents";
+export const AGENTS_DIR = "src/agents";
 
 export interface AgentProfile {
   name: string;

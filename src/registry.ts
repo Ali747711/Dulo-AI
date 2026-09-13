@@ -1,6 +1,6 @@
 // src/registry.ts
 // Everything the agent can use, resolved once at startup: built-in tools, tools
-// dropped into tools/custom/, tools exposed by MCP servers, the skills
+// dropped into src/tools/custom/, tools exposed by MCP servers, the skills
 // catalogue, and named agent profiles. The agent loop never learns where a tool
 // came from — it still just iterates a Tool[].
 import { loadAgents, type AgentProfile } from "./agents.js";

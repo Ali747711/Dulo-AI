@@ -216,8 +216,8 @@ The harness exposes a clean HTTP and Server-Sent Events API:
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Harness health, model configuration, tool count, API key check |
 | `GET` | `/api/tools` | Tool names, descriptions, and JSON Schema parameters |
-| `GET` | `/api/agents` | Named agent profiles loaded from `agents/` |
-| `GET` | `/api/skills` | Skill names and descriptions loaded from `skills/` |
+| `GET` | `/api/agents` | Named agent profiles loaded from `src/agents/` |
+| `GET` | `/api/skills` | Skill names and descriptions loaded from `src/skills/` |
 | `POST` | `/api/run` | Executes an agent run; streams Server-Sent Events |
 | `GET` | `/api/runs` | Run history recorded by the harness, newest first |
 | `GET` | `/api/run/:id/stream?after=N` | Reattach to a live run, or replay a finished one, from sequence `N` |
@@ -260,24 +260,24 @@ itself, which takes the running agent loop with it.
 
 Four extension points, each a folder of files picked up at startup. All are optional.
 
-### `tools/custom/*.ts` — your own tools
+### `src/tools/custom/*.ts` — your own tools
 
 Default-export a `Tool` (or an array of them) and it is registered on the next start. No
 build step and no registration list: `tsx` runs TypeScript directly. See
-[tools/custom/example.ts](tools/custom/example.ts).
+[src/tools/custom/example.ts](src/tools/custom/example.ts).
 
-### `skills/*.md` — instructions loaded on demand
+### `src/skills/*.md` — instructions loaded on demand
 
 Markdown with `name` and `description` frontmatter. Only those two lines reach the system
 prompt; the body is loaded when the model calls `load_skill`. That is how you add
 situational guidance without paying for it on every request.
 
-### `agents/*.md` — named profiles
+### `src/agents/*.md` — named profiles
 
 Frontmatter overrides `model`, `temperature`, `maxSteps` and a `tools` allow/deny map
 (`"*": false` means deny by default). The body replaces the system prompt. Run one with
 `POST /api/run` `{"agent": "reviewer"}` or `npm start -- "query" --agent reviewer`. See
-[agents/reviewer.md](agents/reviewer.md).
+[src/agents/reviewer.md](src/agents/reviewer.md).
 
 ### `dulo.config.json` — configuration
 

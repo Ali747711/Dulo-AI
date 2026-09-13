@@ -1,7 +1,7 @@
 // Any .ts file in this folder that default-exports a Tool is registered at
 // startup. Export an array to add several. Delete this file if you do not
 // want it — nothing else references it.
-import type { Tool } from "../../src/types.js";
+import type { Tool } from "../../types.js";
 
 const wordCount: Tool = {
   name: "word_count",

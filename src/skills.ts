@@ -1,12 +1,12 @@
 // src/skills.ts
-// A skill is a Markdown file in skills/. Only its name and description ever
+// A skill is a Markdown file in src/skills/. Only its name and description ever
 // reach the system prompt; the body is loaded on demand through the load_skill
 // tool. That is the whole point: situational instructions you do not pay for on
 // every request.
 import type { Tool } from "./types.js";
 import { loadMarkdownDir, type MarkdownDoc } from "./markdown.js";
 
-export const SKILLS_DIR = "skills";
+export const SKILLS_DIR = "src/skills";
 
 export interface Skill {
   name: string;
