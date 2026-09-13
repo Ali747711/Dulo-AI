@@ -87,7 +87,10 @@ A conversation with the agent that remembers everything said so far. Sessions li
 the harness (`/api/sessions`), so a chat survives a refresh, a closed tab, or opening the
 panel from another machine. Each assistant turn renders Markdown with its tool activity
 inline and collapsible; gated tools ask for permission right in the thread; a turn keeps
-running if you navigate away and the page reattaches when you come back.
+running if you navigate away and the page reattaches when you come back. Editing an
+earlier message resends it as a sibling rather than overwriting it, so the conversation
+branches — a `‹ k/n ›` switcher on any message with siblings moves between versions, and
+a failed turn offers Retry, which resends the same message the same way.
 
 ### 2. Interactive Playground
 Run queries with real-time feedback. Inspect tool execution steps, intermediate outputs, execution duration, and markdown answers.
