@@ -11,7 +11,18 @@ func (m model) View() string {
 		return "" // no WindowSizeMsg yet
 	}
 
-	innerWidth := m.width - 2 // matches applyLayout's box-border accounting
+	innerWidth := m.width - boxBorders // matches applyLayout's box-border accounting
+
+	// Below minFullLayoutHeight, the status bar and the transcript box get
+	// dropped rather than clamped to a 1-row sliver that still doesn't add up
+	// to m.height — the input box (where the user types) is what has to stay
+	// visible. Below even its own 3 rows, drop its border too.
+	if m.height > 0 && m.height < minFullLayoutHeight {
+		if m.height >= inputBoxHeight {
+			return inputBoxStyle.Width(innerWidth).Render(m.input.View())
+		}
+		return m.input.View()
+	}
 
 	// MaxWidth, not Width: Width pads-and-wraps to fit, which is exactly how a
 	// narrow terminal turned this into two lines and silently broke the fixed

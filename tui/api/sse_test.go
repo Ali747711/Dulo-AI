@@ -81,6 +81,22 @@ func TestParseSSE_LineLongerThanDefaultScannerBuffer(t *testing.T) {
 	}
 }
 
+// F10: a line past maxSSELineBytes hits bufio.ErrTooLong. It must surface as
+// a StreamErrorType event with the channel closed cleanly, not a panic or a
+// silently truncated event.
+func TestParseSSE_LinePastMaxBufferEmitsStreamError(t *testing.T) {
+	tooBig := strings.Repeat("x", maxSSELineBytes+1024)
+	body := `data: {"type":"tool.result","result":"` + tooBig + `"}` + "\n\n"
+
+	events := collect(t, parseSSE(context.Background(), io.NopCloser(strings.NewReader(body))))
+	if len(events) != 1 || events[0].Type != StreamErrorType {
+		t.Fatalf("got %+v, want exactly one StreamErrorType event", events)
+	}
+	if got := events[0].RunEndError(); !strings.Contains(got, "too long") {
+		t.Errorf("expected the bufio.ErrTooLong message to surface, got %q", got)
+	}
+}
+
 func TestParseSSE_MalformedEventEmitsStreamError(t *testing.T) {
 	body := "data: {not json}\n\n"
 	events := collect(t, parseSSE(context.Background(), io.NopCloser(strings.NewReader(body))))

@@ -11,9 +11,20 @@ import "encoding/json"
 // The harness never sends this type; callers can treat it like any other event.
 const StreamErrorType = "stream.error"
 
+// RunUsage mirrors src/events.ts's RunUsage — token counts summed across
+// every model call in a run. Present on run.end when the harness has it.
+type RunUsage struct {
+	PromptTokens     int `json:"promptTokens"`
+	CompletionTokens int `json:"completionTokens"`
+	TotalTokens      int `json:"totalTokens"`
+}
+
 // RunEvent is the Go mirror of the RunEvent union in src/events.ts. Go has no
 // tagged unions, so every variant's fields live on one struct with omitempty;
-// Type is the discriminant to switch on.
+// Type is the discriminant to switch on. Not yet mirrored here at all:
+// permission.ask, permission.resolved, context.condensed, assistant.delta —
+// unrecognized Type values decode fine (fields just stay zero) but render.go
+// treats them as "nothing to show" rather than rendering them.
 //
 // "error" is the one field that cannot be a single typed field: on tool.result
 // it is a {message: string} object, but on run.end it is a plain string — two
@@ -48,10 +59,17 @@ type RunEvent struct {
 	Text string `json:"text,omitempty"`
 
 	// run.end
-	Status      string `json:"status,omitempty"`
-	FinalAnswer string `json:"finalAnswer,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Steps       int    `json:"steps,omitempty"`
+	Status      string    `json:"status,omitempty"`
+	FinalAnswer string    `json:"finalAnswer,omitempty"`
+	Reason      string    `json:"reason,omitempty"`
+	Usage       *RunUsage `json:"usage,omitempty"`
+	Steps       int       `json:"steps,omitempty"`
+
+	// Every event carries this once stored/streamed by the harness
+	// (StoredEvent in src/events.ts). Not used for rendering today, but
+	// reconnect (GET /api/run/:id/stream?after=N) will need it — decoded now
+	// rather than silently dropped.
+	Seq int `json:"seq,omitempty"`
 }
 
 // ToolError returns a tool.result event's error message, or "" if absent.

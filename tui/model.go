@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"time"
 
 	"agent-tui/api"
@@ -34,6 +35,18 @@ type model struct {
 	// see api.Client.Cancel and RunStream's doc comment.
 	runID  string
 	events <-chan api.RunEvent
+	// releaseConn ends this client's own connection to the run stream. It
+	// does NOT stop the run (see runID's comment) — it only lets quitting
+	// release our side's goroutine/socket instead of orphaning them, since
+	// nothing else in this process will ever do that for us (in production
+	// the OS reclaims them on process exit either way, but a test running in
+	// the same process — or any future embedding — would otherwise leak them
+	// for as long as the harness keeps the connection open).
+	releaseConn context.CancelFunc
+	// pendingCancel is "cancel" or "quit" when Esc/Ctrl+C was pressed before
+	// runID was known (stateStarting, or stateRunning with runID still "").
+	// Acted on the moment run.start supplies the id; "" means nothing pending.
+	pendingCancel string
 
 	health    *api.Health
 	healthErr error

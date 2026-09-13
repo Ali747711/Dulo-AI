@@ -31,31 +31,78 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runStartedMsg:
 		m.state = stateRunning
 		m.events = msg.events
+		m.releaseConn = msg.releaseConn
 		return m, listenForEventCmd(m.events)
 
 	case runStartErrMsg:
 		m.state = stateIdle
 		m.history = append(m.history, api.NewStreamErrorEvent(msg.err.Error()))
-		m.refreshTranscript()
+		m.refreshTranscript(true)
+		pending := m.pendingCancel
+		m.pendingCancel = ""
+		if pending == "quit" {
+			// Nothing ever started, so there's nothing to cancel — just honor
+			// the quit that was requested while we were still waiting.
+			return m, tea.Quit
+		}
 		return m, nil
 
 	case runEventMsg:
 		if !msg.ok {
-			// Channel closed: the run is over (run.end already arrived, or the
-			// stream broke and parseSSE appended its own StreamErrorType event).
+			// Channel closed: normally because run.end already arrived. If it
+			// didn't (harness process died or tsx watch restarted mid-run —
+			// see context.md's "Honest limit" gotcha), the state would
+			// otherwise just quietly go back to idle with no indication
+			// anything went wrong, indistinguishable from a run that produced
+			// no output at all.
+			if m.state == stateRunning {
+				m.history = append(m.history, api.NewStreamErrorEvent(
+					"stream ended before run.end — harness stopped or restarted?"))
+				m.refreshTranscript(true)
+			}
 			m.state = stateIdle
 			m.runID = ""
 			m.events = nil
+			if m.releaseConn != nil {
+				m.releaseConn() // no-op if the connection is already what closed it
+				m.releaseConn = nil
+			}
+			pending := m.pendingCancel
+			m.pendingCancel = ""
+			if pending == "quit" {
+				// The stream broke before run.start ever arrived, so there was
+				// never a runID to cancel by — quitting is all that's left.
+				return m, tea.Quit
+			}
 			return m, nil
 		}
+
 		if msg.event.Type == "run.start" {
 			m.runID = msg.event.RunID
 		}
+
+		lines := renderEvent(msg.event, m.viewport.Width)
 		m.history = append(m.history, msg.event)
+		if len(lines) > 0 {
+			m.refreshTranscript(msg.event.Type == "run.start")
+		}
 		if msg.event.Type == "run.end" {
 			m.state = stateIdle
 		}
-		m.refreshTranscript()
+
+		if msg.event.Type == "run.start" && m.pendingCancel != "" {
+			pending := m.pendingCancel
+			m.pendingCancel = ""
+			if pending == "quit" {
+				if m.releaseConn != nil {
+					m.releaseConn()
+					m.releaseConn = nil
+				}
+				return m, tea.Sequence(bestEffortCancelCmd(m.client, m.runID), tea.Quit)
+			}
+			return m, tea.Batch(cancelRunCmd(m.client, m.runID), listenForEventCmd(m.events))
+		}
+
 		// Keep reading until the channel closes — that's the only real
 		// end-of-run signal; run.end doesn't necessarily mean no more events.
 		return m, listenForEventCmd(m.events)
@@ -63,7 +110,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cancelResultMsg:
 		if msg.err != nil {
 			m.history = append(m.history, api.NewStreamErrorEvent("cancel request failed: "+msg.err.Error()))
-			m.refreshTranscript()
+			m.refreshTranscript(true)
 		}
 		// On success there's nothing to show yet — the harness's own run.end
 		// (status "cancelled") is what actually confirms the run stopped, and
@@ -76,14 +123,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// Layout budget, shared with view.go so both agree on the same numbers.
+const (
+	statusBarHeight = 1
+	inputBoxHeight  = 3 // 1 content line + top/bottom border
+	boxBorders      = 2 // a rounded border costs 1 column/row per side
+
+	// minFullLayoutHeight is the shortest terminal that fits status bar +
+	// bordered transcript (>=1 content row) + bordered input. Below it,
+	// View() drops to a smaller layout instead of overflowing — see F7.
+	minFullLayoutHeight = statusBarHeight + inputBoxHeight + boxBorders + 1
+)
+
 // applyLayout recomputes the input/viewport sizes from m.width/m.height.
 // Golden Rule 1: account for every border and chrome line before sizing
 // content, rather than setting an explicit Height() on a bordered style.
 func (m *model) applyLayout() {
-	const statusBarHeight = 1
-	const inputBoxHeight = 3 // 1 content line + top/bottom border
-	const boxBorders = 2     // a rounded border costs 1 column/row per side
-
 	innerWidth := m.width - boxBorders
 	if innerWidth < 1 {
 		innerWidth = 1
@@ -100,15 +155,24 @@ func (m *model) applyLayout() {
 	// keeping the input box's border aligned with the transcript box's.
 	m.input.Width = innerWidth - len(m.input.Prompt)
 
-	m.refreshTranscript()
+	// A resize reflows existing content; it should not also yank a
+	// scrolled-up view back to the bottom (see refreshTranscript's forceBottom).
+	m.refreshTranscript(false)
 }
 
 // refreshTranscript re-wraps history at the current viewport width — always
-// from the raw events, never by re-wrapping already-wrapped text — and pins
-// the view to the bottom, like a live log tail.
-func (m *model) refreshTranscript() {
+// from the raw events, never by re-wrapping already-wrapped text. It only
+// jumps to the bottom when the view was already there, or forceBottom asks
+// for it regardless (used for run.start: a fresh run's output should be
+// visible even if the previous run's transcript was scrolled up when it was
+// submitted). Otherwise a scrolled-up read gets yanked back down by the very
+// next streamed event.
+func (m *model) refreshTranscript(forceBottom bool) {
+	wasAtBottom := forceBottom || m.viewport.AtBottom()
 	m.viewport.SetContent(renderTranscript(m.history, m.viewport.Width))
-	m.viewport.GotoBottom()
+	if wasAtBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 func checkHealthCmd(client *api.Client) tea.Cmd {
@@ -124,18 +188,20 @@ func healthTickCmd() tea.Cmd {
 	return tea.Tick(healthPollInterval, func(time.Time) tea.Msg { return healthTickMsg{} })
 }
 
-// startRunCmd has no cancel of its own tied to the request context: closing
-// this connection no longer stops the run server-side (see RunStream's doc
-// comment), so there is nothing useful left to cancel it *for*. A context
-// still has to be passed to RunStream, and Background is the honest one —
-// no fixed deadline applies to watching a run.
+// startRunCmd's context is not for stopping the run — closing this
+// connection no longer does that server-side (see RunStream's doc comment) —
+// it is only so quitting can release *our* goroutine and socket rather than
+// leaving them for the process to take down. No fixed deadline: a run can
+// legitimately outlive any reasonable timeout.
 func startRunCmd(client *api.Client, req api.RunRequest) tea.Cmd {
 	return func() tea.Msg {
-		events, err := client.RunStream(context.Background(), req)
+		ctx, cancel := context.WithCancel(context.Background())
+		events, err := client.RunStream(ctx, req)
 		if err != nil {
+			cancel()
 			return runStartErrMsg{err: err}
 		}
-		return runStartedMsg{events: events}
+		return runStartedMsg{events: events, releaseConn: cancel}
 	}
 }
 

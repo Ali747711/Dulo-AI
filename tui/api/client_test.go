@@ -5,9 +5,34 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+// F3: a trailing slash on the configured base URL used to double up with the
+// leading slash on every path, which the harness's `new URL(req.url, ...)`
+// parses as a protocol-relative authority — every route 404'd.
+func TestNewClient_TrimsTrailingSlash(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"ok":true,"name":"dulo","model":"m","fallbackModels":[],"hasApiKey":true,"toolCount":0}`)
+	}))
+	defer srv.Close()
+
+	for _, suffix := range []string{"", "/", "//"} {
+		gotPath = ""
+		c := NewClient(srv.URL + suffix)
+		if _, err := c.GetHealth(context.Background()); err != nil {
+			t.Fatalf("GetHealth with base %q: %v", srv.URL+suffix, err)
+		}
+		if gotPath != "/api/health" {
+			t.Errorf("base %q: harness saw path %q, want \"/api/health\"", srv.URL+suffix, gotPath)
+		}
+	}
+}
 
 func TestClient_GetHealthAndGetTools(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -131,5 +156,58 @@ func TestClient_RunStream_CancelClosesChannelPromptly(t *testing.T) {
 	case <-unblock:
 	case <-time.After(2 * time.Second):
 		t.Fatal("server handler's request context was never cancelled — client left the connection open")
+	}
+}
+
+// F10: non-200 responses from RunStream and Cancel must produce an error
+// that carries the status and body, not just "request failed" — this is the
+// text a user actually sees on screen.
+func TestClient_RunStream_NonOKResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":"invalid request","issues":[{"path":["model"]}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	_, err := c.RunStream(context.Background(), RunRequest{Query: "hi"})
+	if err == nil {
+		t.Fatal("expected an error for a 400 response")
+	}
+	if !strings.Contains(err.Error(), "400") || !strings.Contains(err.Error(), "invalid request") {
+		t.Errorf("error should carry status and body, got: %v", err)
+	}
+}
+
+func TestClient_Cancel_NonOKResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no such run", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	err := c.Cancel(context.Background(), "missing-run-id")
+	if err == nil {
+		t.Fatal("expected an error for a 404 response")
+	}
+	if !strings.Contains(err.Error(), "404") || !strings.Contains(err.Error(), "no such run") {
+		t.Errorf("error should carry status and body, got: %v", err)
+	}
+}
+
+func TestClient_Cancel_Success(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		fmt.Fprint(w, `{}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	if err := c.Cancel(context.Background(), "r1"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/api/run/r1/cancel" {
+		t.Errorf("got %s %s, want POST /api/run/r1/cancel", gotMethod, gotPath)
 	}
 }

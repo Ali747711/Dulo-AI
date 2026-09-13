@@ -8,7 +8,6 @@ package main
 // terminal before calling the feature done; see the Phase 1 write-up.
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +34,7 @@ func fakeHarness(t *testing.T) *httptest.Server {
 			`{"type":"tool.call","step":1,"callId":"c1","tool":"get_current_time","args":{}}`,
 			`{"type":"tool.result","step":1,"callId":"c1","tool":"get_current_time","result":"12:00","durationMs":1,"isError":false}`,
 			`{"type":"assistant","step":2,"text":"It is 12:00."}`,
-			`{"type":"run.end","status":"completed","finalAnswer":"It is 12:00.","reason":"answered","steps":2,"durationMs":5}`,
+			`{"type":"run.end","status":"completed","finalAnswer":"It is 12:00.","reason":"answered","steps":2,"durationMs":5,"usage":{"promptTokens":10,"completionTokens":5,"totalTokens":15}}`,
 		}
 		for _, f := range frames {
 			fmt.Fprint(w, "data: "+f+"\n\n")
@@ -50,21 +49,21 @@ func TestSmoke_SubmitQueryAndRenderTranscript(t *testing.T) {
 	defer srv.Close()
 
 	cfg := Config{HarnessURL: srv.URL, MaxSteps: 8, Temperature: 0.2}
-	var out bytes.Buffer
+	var out syncBuffer
 	p := tea.NewProgram(initialModel(cfg), tea.WithInput(strings.NewReader("")), tea.WithOutput(&out))
 
 	done := make(chan error, 1)
 	go func() { _, err := p.Run(); done <- err }()
 
 	p.Send(tea.WindowSizeMsg{Width: 100, Height: 30})
-	time.Sleep(150 * time.Millisecond) // let the health check land
+	waitForSubstring(t, &out, "connected", 2*time.Second)
 
 	for _, r := range "what time is it" {
 		p.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	p.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	waitForSubstring(t, &out, "done", 2*time.Second) // run.end rendered
 
-	time.Sleep(300 * time.Millisecond) // let the streamed run finish
 	p.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	select {
@@ -85,6 +84,7 @@ func TestSmoke_SubmitQueryAndRenderTranscript(t *testing.T) {
 		"12:00",            // tool.result line
 		"It is 12:00.",     // assistant text
 		"done",             // run.end summary
+		"15 tokens",        // F9: usage surfaced on run.end
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("rendered output missing %q\n--- full output ---\n%s", want, rendered)

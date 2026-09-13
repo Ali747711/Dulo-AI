@@ -1,14 +1,23 @@
 package main
 
 import (
+	"context"
+
 	"agent-tui/api"
 )
 
-// runState is which mode the single input/transcript pane is in.
+// runState is which mode the single input/transcript pane is in. stateStarting
+// covers the gap between submitting a query and the harness's run.start event
+// actually arriving: the POST to /api/run is in flight (stateStarting), then
+// once it succeeds the SSE stream is open but the harness hasn't published
+// run.start yet, so runID is still "" (stateRunning with runID == ""). Both
+// halves of that gap need to reject a second submit and remember an Esc/Ctrl+C
+// pressed too early instead of silently doing nothing — see model.pendingCancel.
 type runState int
 
 const (
 	stateIdle runState = iota
+	stateStarting
 	stateRunning
 )
 
@@ -25,8 +34,12 @@ type healthMsg struct {
 type healthTickMsg struct{}
 
 // runStartedMsg means RunStream succeeded and a run is now streaming.
+// releaseConn ends this client's own connection — used only to release our
+// side's resources on quit; it does not stop the run server-side (that's
+// api.Client.Cancel, over POST /api/run/:id/cancel).
 type runStartedMsg struct {
-	events <-chan api.RunEvent
+	events      <-chan api.RunEvent
+	releaseConn context.CancelFunc
 }
 
 // runStartErrMsg means RunStream failed before any event arrived (e.g. the

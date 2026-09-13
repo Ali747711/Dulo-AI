@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -17,9 +18,14 @@ type Client struct {
 }
 
 // NewClient builds a Client for the harness at baseURL (e.g. "http://localhost:3001").
+// A trailing slash is trimmed: BaseURL+path is a plain concatenation
+// everywhere below, and "http://host/" + "/api/health" would otherwise send
+// "//api/health" — the harness's `new URL(req.url, ...)` parses a leading
+// "//" as a protocol-relative authority, so every route 404s. Trimming here,
+// once, means every call site can stay a simple concatenation.
 func NewClient(baseURL string) *Client {
 	return &Client{
-		BaseURL: baseURL,
+		BaseURL: strings.TrimRight(baseURL, "/"),
 		http:    &http.Client{Timeout: 5 * time.Second},
 	}
 }

@@ -7,11 +7,11 @@ package main
 // harness's resulting run.end (status "cancelled") renders.
 
 import (
-	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +21,9 @@ import (
 func TestSmoke_EscCallsRealCancelEndpoint(t *testing.T) {
 	cancelPosted := make(chan string, 1)
 	endStream := make(chan struct{})
+	var closeOnce sync.Once // Esc's cancel is best-effort and could in
+	// principle be posted more than once; closing endStream must stay a no-op
+	// past the first time regardless.
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
@@ -50,28 +53,27 @@ func TestSmoke_EscCallsRealCancelEndpoint(t *testing.T) {
 		case cancelPosted <- "r1":
 		default:
 		}
-		close(endStream)
+		closeOnce.Do(func() { close(endStream) })
 		fmt.Fprint(w, `{}`)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	cfg := Config{HarnessURL: srv.URL, MaxSteps: 8, Temperature: 0.2}
-	var out bytes.Buffer
+	var out syncBuffer
 	p := tea.NewProgram(initialModel(cfg), tea.WithInput(strings.NewReader("")), tea.WithOutput(&out))
 
 	done := make(chan error, 1)
 	go func() { _, err := p.Run(); done <- err }()
 
 	p.Send(tea.WindowSizeMsg{Width: 100, Height: 30})
-	time.Sleep(150 * time.Millisecond)
+	waitForSubstring(t, &out, "connected", 2*time.Second)
 
 	for _, r := range "long task" {
 		p.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	p.Send(tea.KeyMsg{Type: tea.KeyEnter})
-
-	time.Sleep(150 * time.Millisecond) // let run.start land
+	waitForSubstring(t, &out, "long task", 2*time.Second) // run.start rendered
 	p.Send(tea.KeyMsg{Type: tea.KeyEsc})
 
 	select {
@@ -83,7 +85,11 @@ func TestSmoke_EscCallsRealCancelEndpoint(t *testing.T) {
 		t.Fatal("Esc did not result in a POST /api/run/r1/cancel")
 	}
 
-	time.Sleep(150 * time.Millisecond) // let the resulting run.end render
+	// Wait for the harness's own run.end to actually render before quitting:
+	// sending Ctrl+C while state is still "running" would fire a second,
+	// redundant cancel POST (harmless to the app, but this fake handler
+	// isn't built to be hit twice).
+	waitForSubstring(t, &out, "cancelled", 2*time.Second)
 	p.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
 
 	select {
@@ -93,9 +99,5 @@ func TestSmoke_EscCallsRealCancelEndpoint(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("program did not exit after ctrl+c")
-	}
-
-	if !strings.Contains(out.String(), "cancelled") {
-		t.Errorf("rendered transcript does not show the run as cancelled:\n%s", out.String())
 	}
 }

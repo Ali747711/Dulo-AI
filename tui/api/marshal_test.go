@@ -43,3 +43,32 @@ func TestRunRequest_ZeroTemperatureIsSent(t *testing.T) {
 		t.Errorf("expected temperature:0 to be sent, got: %s", body)
 	}
 }
+
+// The harness reports usage and a per-event seq on every run.end (StoredEvent
+// in src/events.ts); both must decode, not be silently dropped by an
+// api.RunEvent that has no field for them.
+func TestRunEvent_DecodesUsageAndSeq(t *testing.T) {
+	raw := `{"type":"run.end","status":"completed","steps":2,"durationMs":10,` +
+		`"usage":{"promptTokens":100,"completionTokens":50,"totalTokens":150},"seq":42}`
+	var ev RunEvent
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.Usage == nil || ev.Usage.TotalTokens != 150 || ev.Usage.PromptTokens != 100 || ev.Usage.CompletionTokens != 50 {
+		t.Errorf("Usage = %+v, want {100 50 150}", ev.Usage)
+	}
+	if ev.Seq != 42 {
+		t.Errorf("Seq = %d, want 42", ev.Seq)
+	}
+}
+
+func TestRunEvent_NoUsageDecodesAsNilNotZeroStruct(t *testing.T) {
+	raw := `{"type":"run.end","status":"completed","steps":1,"durationMs":1}`
+	var ev RunEvent
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatal(err)
+	}
+	if ev.Usage != nil {
+		t.Errorf("Usage = %+v, want nil when the harness sends none", ev.Usage)
+	}
+}
