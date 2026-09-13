@@ -40,6 +40,9 @@ import { pathToHead } from "@/lib/tree"
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
+/** Draft slot used while no session is selected yet. Never a real session id. */
+const NO_SESSION_DRAFT_KEY = "__no_session__"
+
 export function ChatPage() {
   const { state: app } = useStore()
   const health = useHealth()
@@ -125,6 +128,11 @@ export function ChatPage() {
         },
       })
       dispatch({ type: "session/select", id: session.id })
+      // Anything typed before a chat existed moves with the user into it,
+      // rather than being silently dropped once a real session id exists.
+      const pending = state.drafts[NO_SESSION_DRAFT_KEY]
+      if (pending)
+        dispatch({ type: "draft/set", id: session.id, text: pending })
       setListOpen(false)
     } catch (error) {
       toast.error(describe(error))
@@ -166,9 +174,17 @@ export function ChatPage() {
     }
   }
 
-  const draft = selectedId ? (state.drafts[selectedId] ?? "") : ""
+  // Before any chat is selected, drafts still need a place to live: keyed by
+  // a sentinel that can never collide with a real session id (those are
+  // crypto.randomUUID()s), so typing works immediately on a fresh page load
+  // instead of silently reverting every keystroke (a controlled input whose
+  // value and onChange both no-op without a selectedId looks broken, not
+  // just "can't send yet" — Send staying disabled already carries that
+  // message via disabledReason).
+  const draftKey = selectedId ?? NO_SESSION_DRAFT_KEY
+  const draft = state.drafts[draftKey] ?? ""
   const setDraft = (text: string) => {
-    if (selectedId) dispatch({ type: "draft/set", id: selectedId, text })
+    dispatch({ type: "draft/set", id: draftKey, text })
   }
 
   const send = async () => {
