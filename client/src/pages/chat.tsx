@@ -313,6 +313,35 @@ export function ChatPage() {
       ? "Start a new chat first"
       : undefined
 
+  // A failed turn's user message, if the most recent turn actually failed —
+  // "Retry" resends its exact parts as a sibling of its own parent, per
+  // design §15 ("resend the same user message as a sibling"). lastError and
+  // turns are kept in sync by the same run.end fold, so this is safe to
+  // derive rather than track separately.
+  const lastTurn = selected?.turns[selected.turns.length - 1]
+  const retryTarget =
+    lastTurn?.status === "failed"
+      ? selected?.messages.find((m) => m.id === lastTurn.userMessageId)
+      : undefined
+
+  const retry = async () => {
+    if (!selectedId || !retryTarget) return
+    const text = retryTarget.parts
+      .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
+      .map((p) => p.text)
+      .join("\n\n")
+    try {
+      const outcome = await sendMessage(base, selectedId, text, {
+        parentId: retryTarget.parentId,
+      })
+      if (outcome.status === "queued") {
+        toast("Queued — it will send once the current turn finishes")
+      }
+    } catch (error) {
+      toast.error(describe(error))
+    }
+  }
+
   const list = (
     <SessionList
       sessions={state.summaries}
@@ -399,6 +428,7 @@ export function ChatPage() {
           onDecide={(id, decision) => void decide(id, decision)}
           onEdit={editMessage}
           onSwitchBranch={(id) => void switchBranch(id)}
+          onRetry={retryTarget ? () => void retry() : undefined}
         />
 
         {editingBanner}
