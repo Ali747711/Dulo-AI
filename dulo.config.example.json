@@ -1,5 +1,10 @@
 {
   "disabledTools": ["get_env"],
+  "approval": {
+    "mode": "ask",
+    "tools": ["shell", "write_file", "edit_file", "http_request"],
+    "gateMcpTools": true
+  },
   "mcpServers": {
     "fs": {
       "command": "npx",

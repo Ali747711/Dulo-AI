@@ -46,6 +46,16 @@ export type RunStatus = "running" | "completed" | "failed" | "cancelled"
  */
 export type RunEndReason = "answered" | "step-limit"
 
+export type PermissionDecision = "allow" | "deny" | "always" | "timeout"
+
+/** A gated tool call waiting on the user before it runs. */
+export interface PendingPermission {
+  id: string
+  step: number
+  tool: string
+  args: Record<string, unknown>
+}
+
 /** Token counts summed over every model call in a run. */
 export interface RunUsage {
   promptTokens: number
@@ -70,6 +80,10 @@ export interface Run {
   error?: string
   reason?: RunEndReason
   usage?: RunUsage
+  /** Unanswered permission requests, newest last. */
+  permissions?: PendingPermission[]
+  /** Steps where older context was condensed away. */
+  condensedAt?: number[]
 }
 
 export interface Settings {
@@ -125,6 +139,26 @@ export type RunEvent =
       durationMs: number
       isError: boolean
       error?: { message: string }
+    }
+  | {
+      type: "permission.ask"
+      step: number
+      id: string
+      tool: string
+      args: Record<string, unknown>
+    }
+  | {
+      type: "permission.resolved"
+      step: number
+      id: string
+      tool: string
+      decision: PermissionDecision
+    }
+  | {
+      type: "context.condensed"
+      step: number
+      droppedMessages: number
+      estimatedTokens: number
     }
   | { type: "assistant.delta"; step: number; text: string }
   | { type: "assistant"; step: number; text: string }

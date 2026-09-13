@@ -10,6 +10,20 @@ Use tools when needed. When you have the final answer, just reply normally witho
 
 const DEFAULT_MAX_STEPS = 8;
 
+/**
+ * Rough token budget for the conversation. Dulo does not track per-model
+ * context windows, so this is a conservative constant: better to condense
+ * early than to have a long run die on an opaque provider error.
+ */
+const TOKEN_BUDGET = 24_000;
+/** Bytes per token. Crude, but the error only needs to be in the right direction. */
+const CHARS_PER_TOKEN = 4;
+/** Messages kept verbatim when condensing; older ones become a digest. */
+const KEEP_RECENT_MESSAGES = 6;
+const CONDENSED_CHARS = 500;
+/** Cap applied to kept messages when folding the middle was not enough. */
+const MAX_KEPT_MESSAGE_CHARS = 8_000;
+
 // Asked for on the final allowed step, with no tools offered, so a run that hits
 // the limit returns what it learned instead of a bare "reached max steps" error.
 const WRAP_UP_PROMPT = `You have reached the step limit and cannot call any more tools.
@@ -31,7 +45,73 @@ export interface RunOptions {
   onEvent?: (event: RunEvent) => void;
   /** Cancels the run between steps and aborts the in-flight LLM request. */
   signal?: AbortSignal;
+  /**
+   * Asked before a gated tool runs. Resolving false turns the call into a
+   * denial the model sees, so it can choose a different approach. Omit to run
+   * every tool unasked.
+   */
+  requestPermission?: (
+    call: { id: string; tool: string; args: Record<string, unknown> },
+  ) => Promise<boolean>;
 }
+
+const estimateTokens = (messages: Message[]): number =>
+  Math.ceil(JSON.stringify(messages).length / CHARS_PER_TOKEN);
+
+const summarise = (message: Message): string => {
+  const label = message.name ? `${message.role}(${message.name})` : message.role;
+  const body = message.content ?? JSON.stringify(message.tool_calls ?? []);
+  return `${label}: ${body.slice(0, CONDENSED_CHARS)}${
+    body.length > CONDENSED_CHARS ? "…" : ""
+  }`;
+};
+
+/** Shorten one oversized tool or assistant message, leaving the prompt alone. */
+const clip = (message: Message): Message => {
+  if (message.role === "system" || message.role === "user") return message;
+  const body = message.content;
+  if (!body || body.length <= MAX_KEPT_MESSAGE_CHARS) return message;
+  return {
+    ...message,
+    content:
+      `${body.slice(0, MAX_KEPT_MESSAGE_CHARS)}\n\n[truncated: ${body.length} ` +
+      `characters total. Read a smaller range or search instead of re-reading.]`,
+  };
+};
+
+/**
+ * Keep the system prompt, the original question and the most recent exchanges
+ * verbatim; fold everything in between into one digest. If that is still over
+ * budget — one read_file or http_request can exceed it on its own — clip the
+ * oversized messages that remain.
+ *
+ * The cheap version on purpose: opencode asks the model for a summary, which is
+ * a second LLM call per compaction and only earns its keep once there are real
+ * multi-turn conversations to protect.
+ */
+const condense = (messages: Message[]): Message[] => {
+  const head = messages.slice(0, 2); // system + original user query
+  const tailStart = Math.max(2, messages.length - KEEP_RECENT_MESSAGES);
+  const middle = messages.slice(2, tailStart);
+  const tail = messages.slice(tailStart);
+
+  const folded: Message[] =
+    middle.length > 0
+      ? [
+          ...head,
+          {
+            role: "user",
+            content:
+              `[Earlier steps were condensed to stay within the context ` +
+              `window. Summary of what happened:]\n${middle.map(summarise).join("\n")}`,
+          },
+          ...tail,
+        ]
+      : [...head, ...tail];
+
+  if (estimateTokens(folded) <= TOKEN_BUDGET) return folded;
+  return folded.map(clip);
+};
 
 interface ToolOutcome {
   result: string;
@@ -64,6 +144,7 @@ const executeTool = async (
   name: string,
   rawArgs: string,
   signal?: AbortSignal,
+  approve?: (args: Record<string, unknown>) => Promise<boolean>,
 ): Promise<{ args: Record<string, unknown>; outcome: ToolOutcome }> => {
   const tool = tools.find((t) => t.name === name);
   if (!tool) {
@@ -80,6 +161,16 @@ const executeTool = async (
   }
   if (signal?.aborted) {
     return { args, outcome: failed("cancelled before the tool started") };
+  }
+  if (approve && !(await approve(args))) {
+    // A denial is a normal outcome the model should react to, not a crash.
+    return {
+      args,
+      outcome: failed(
+        `the user denied permission to run "${name}". Do not retry it; ` +
+          `either continue without it or explain what you need.`,
+      ),
+    };
   }
   try {
     return { args, outcome: { result: await tool.execute(args, signal), isError: false } };
@@ -102,10 +193,7 @@ export async function runAgent(
     );
   }
 
-  const {
-    onEvent = () => {},
-    signal,
-  } = options;
+  const { onEvent = () => {}, signal, requestPermission } = options;
   // Explicit options win over the profile, which wins over the defaults.
   const model = options.model ?? profile?.model;
   const temperature = options.temperature ?? profile?.temperature;
@@ -144,6 +232,25 @@ export async function runAgent(
       };
     }
     onEvent({ type: "step.start", step });
+
+    const estimated = estimateTokens(messages);
+    if (estimated > TOKEN_BUDGET) {
+      const beforeCount = messages.length;
+      const condensed = condense(messages);
+      const after = estimateTokens(condensed);
+      // Only accept it if it actually bought something, so a conversation that
+      // cannot be shrunk further is not rewritten on every single step.
+      if (after < estimated) {
+        messages.length = 0;
+        messages.push(...condensed);
+        onEvent({
+          type: "context.condensed",
+          step,
+          droppedMessages: beforeCount - condensed.length,
+          estimatedTokens: after,
+        });
+      }
+    }
 
     let response: Message;
     try {
@@ -199,6 +306,10 @@ export async function runAgent(
             toolName,
             toolCall.function.arguments,
             signal,
+            requestPermission
+              ? (args) =>
+                  requestPermission({ id: callId, tool: toolName, args })
+              : undefined,
           );
           onEvent({
             type: "tool.result",

@@ -177,6 +177,28 @@ export const replayRun = async (
   await drain(res.body, onEvent)
 }
 
+/** Answer one pending permission request. */
+export const replyPermission = async (
+  base: string,
+  runId: string,
+  requestId: string,
+  decision: "allow" | "deny" | "always"
+): Promise<boolean> => {
+  try {
+    const res = await fetch(
+      endpoint(base, `/api/run/${runId}/permission/${requestId}`),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision }),
+      }
+    )
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 /** Ask the harness to stop a run. The run id comes from the run.start event. */
 export const cancelRun = async (
   base: string,

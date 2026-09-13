@@ -38,6 +38,7 @@ export const CATEGORY_BY_NAME: Record<string, ToolCategory> = {
   glob: "files",
   edit_file: "files",
   grep_files: "files",
+  manage_todos: "utility",
   shell: "system",
   get_system_info: "system",
   get_env: "system",
@@ -132,6 +133,32 @@ export const DEFAULT_TOOLS: ToolDef[] = [
         maxResults: { type: "number", default: 200 },
       },
       ["pattern"]
+    ),
+  },
+  {
+    name: "manage_todos",
+    description:
+      "Record or update your plan as a checklist. Send the whole list each time.",
+    category: "utility",
+    enabled: true,
+    parameters: objectSchema(
+      {
+        todos: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              content: { type: "string" },
+              status: {
+                type: "string",
+                enum: ["pending", "in_progress", "done"],
+              },
+            },
+            required: ["content", "status"],
+          },
+        },
+      },
+      ["todos"]
     ),
   },
   {

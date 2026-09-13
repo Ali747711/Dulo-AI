@@ -10,6 +10,9 @@ export type RunStatus = "completed" | "failed" | "cancelled";
  */
 export type RunEndReason = "answered" | "step-limit";
 
+/** What a human (or a timeout) decided about one gated tool call. */
+export type PermissionDecision = "allow" | "deny" | "always" | "timeout";
+
 /** Token counts summed over every model call in a run. */
 export interface RunUsage {
   promptTokens: number;
@@ -44,6 +47,28 @@ export type RunEvent =
       isError: boolean;
       /** Present when isError; the thrown message without the "Error: " prefix. */
       error?: { message: string };
+    }
+  /** A gated tool is waiting for a human before it runs. */
+  | {
+      type: "permission.ask";
+      step: number;
+      id: string;
+      tool: string;
+      args: Record<string, unknown>;
+    }
+  | {
+      type: "permission.resolved";
+      step: number;
+      id: string;
+      tool: string;
+      decision: PermissionDecision;
+    }
+  /** Older messages were folded into a digest to stay inside the budget. */
+  | {
+      type: "context.condensed";
+      step: number;
+      droppedMessages: number;
+      estimatedTokens: number;
     }
   /** A piece of assistant text as it streams. Concatenating every delta for a
    *  step yields the same text as that step's "assistant" event. */

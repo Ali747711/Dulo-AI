@@ -164,9 +164,11 @@ details to lock in: connect once at process startup (not per request), and merge
 the *same* `Tool[]` array `src/tools/index.ts` exports, so `agent.ts` needs no changes at all.
 Start without OAuth. Do 5.1 first.
 
-## Step 6 — The bigger ones, once the above is in
+## Step 6 — The bigger ones, once the above is in — ✅ DONE 2026-09-13
 
-**6.1 Permission gate (the highest-value item in this document, and the largest).**
+*`src/permissions.ts`, `src/tools/todo.ts`, and a context guard in `agent.ts`.*
+
+**6.1 Permission gate (the highest-value item in this document, and the largest).** *(implemented)*
 Dulo has no approval step. `enabledTools` is chosen once before the run starts, and by the time a
 `tool.call` event reaches the browser the shell command or file write has *already run*.
 *How opencode does it:* a pending-promise map. `PermissionV2.assert` parks a deferred keyed by
@@ -178,12 +180,14 @@ emit `{type: "permission.ask", id, tool, args}` and return a promise. Keep
 `{decision: "allow" | "deny" | "always"}`. "always" adds the tool name to an in-memory `Set` for
 the rest of that run. No rule language, no wildcards, no database.
 
-**6.2 `manage_todos` tool** — opencode's todo tool gets no special treatment in the loop at all;
+**6.2 `manage_todos` tool** *(implemented)* — opencode's todo tool gets no special treatment in the loop at all;
 it is an ordinary tool that echoes its input back. Its whole value is giving the model a typed
 slot to externalize a plan that the UI can render as a checklist. Add the tool, then special-case
 its rendering in the Playground. No new event type needed.
 
-**6.3 Token budget guard** — `messages[]` grows every step with zero accounting. Estimate with
+**6.3 Token budget guard** *(implemented, with a correction — the first version only folded
+messages between the head and the last six, so a run with three 72 KB `read_file` results
+never condensed. It now folds first and clips whatever oversized messages remain.)* — `messages[]` grows every step with zero accounting. Estimate with
 `JSON.stringify(messages).length / 4`, compare to a conservative constant (~24k), and on overflow
 keep the system prompt, the original query and the last 2–3 steps verbatim while collapsing older
 messages by plain truncation. Save opencode's LLM-generated running summary for when Dulo has
@@ -211,5 +215,18 @@ ruleset — that matters once there are multiple agent profiles with different t
 - **Step 2 — done** (2026-09-13).
 - **Step 3 — done** (2026-09-13).
 - **Step 4 — done** (2026-09-13).
-- **Step 5 — done** (2026-09-13).
-- **Next: step 6** — the permission gate, `manage_todos`, and a token budget guard.
+- **Step 6 — done** (2026-09-13).
+
+**The roadmap is complete.** Every step above is implemented and verified; see
+`context.md` §4 for the decision behind each one and §8 for what was measured.
+
+Two things worth knowing before building further:
+
+1. **A run still dies with the harness process.** Step 4 made a run survive a client
+   disconnect, not a `tsx watch` restart. Surviving that means moving the agent loop's
+   state out of memory, which is a much bigger change than anything here.
+2. **There are still no tests.** Every step was verified by running it against stubs and
+   reading the output, which caught four real bugs — but none of it is repeatable. The
+   highest-value next step is probably a test runner plus cases for the pieces that are
+   now pure functions and easy to cover: `classifyFailure`, `ToolCallAccumulator`,
+   `condense`, `applyToolPolicy`, `createGate`, `prefixName`, `globToRegExp`.

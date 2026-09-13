@@ -1,4 +1,8 @@
 {
   "disabledTools": ["get_env"],
+  "approval": {
+    "mode": "ask",
+    "gateMcpTools": true
+  },
   "mcpServers": {}
 }

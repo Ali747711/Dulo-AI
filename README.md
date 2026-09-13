@@ -284,6 +284,7 @@ Frontmatter overrides `model`, `temperature`, `maxSteps` and a `tools` allow/den
 ```json
 {
   "disabledTools": ["get_env"],
+  "approval": { "mode": "ask", "gateMcpTools": true },
   "mcpServers": {
     "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
     "docs": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ..." } }
@@ -293,6 +294,28 @@ Frontmatter overrides `model`, `temperature`, `maxSteps` and a `tools` allow/den
 
 One flat file at the project root — no global config directory and no merge precedence.
 Copy [dulo.config.example.json](dulo.config.example.json) to get started.
+
+---
+
+## Approval Gate
+
+Anything that writes to disk, runs a command or reaches the network pauses until you say
+so. The tool does **not** run while it waits — the run blocks on the answer.
+
+| Where | How you answer |
+| :--- | :--- |
+| Control panel | Allow once / Always in this run / Deny, on the run view |
+| CLI (a terminal) | `y` / `n` / `a` at the prompt |
+| CLI (piped stdin) | Nobody to ask, so gated tools run; a warning says so |
+| HTTP | `POST /api/run/:id/permission/:requestId` with `{"decision":"allow"}` |
+
+Gated by default: `shell`, `write_file`, `edit_file`, `file_compress`, `file_extract`,
+`http_request`, plus every MCP tool. "Always" lasts for that one run and is never written
+to disk. Nobody answering within five minutes counts as a denial, and a denial reaches the
+model as a normal tool error so it can try something else.
+
+Set `"approval": { "mode": "auto" }` to run everything unasked, or list your own
+`"tools": [...]` to change what is gated.
 
 ---
 

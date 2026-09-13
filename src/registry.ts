@@ -6,6 +6,7 @@
 import { loadAgents, type AgentProfile } from "./agents.js";
 import { loadConfig, type DuloConfig, DEFAULT_CONFIG } from "./config.js";
 import { loadMcpTools, type McpRegistry } from "./mcp.js";
+import { DEFAULT_GATED_TOOLS } from "./permissions.js";
 import { createSkillTool, describeSkills, loadSkills, type Skill } from "./skills.js";
 import { builtinTools } from "./tools/index.js";
 import { loadCustomTools } from "./tools/custom.js";
@@ -13,6 +14,8 @@ import type { Tool } from "./types.js";
 
 export interface Registry {
   tools: Tool[];
+  /** Tool names the permission gate should stop on, resolved from config. */
+  gatedTools: string[];
   skills: Skill[];
   agents: AgentProfile[];
   config: DuloConfig;
@@ -23,6 +26,7 @@ export interface Registry {
 
 const EMPTY: Registry = {
   tools: builtinTools,
+  gatedTools: DEFAULT_GATED_TOOLS,
   skills: [],
   agents: [],
   config: DEFAULT_CONFIG,
@@ -88,8 +92,19 @@ export const initRegistry = async (): Promise<Registry> => {
     ...(skills.length > 0 ? [createSkillTool(skills)] : []),
   ]).filter((tool) => !disabled.has(tool.name));
 
+  // MCP tools are outside Dulo's sandbox, so they are gated with the rest
+  // unless the config explicitly says otherwise.
+  const gatedTools =
+    config.approval.mode === "auto"
+      ? []
+      : [
+          ...(config.approval.tools ?? DEFAULT_GATED_TOOLS),
+          ...(config.approval.gateMcpTools ? mcp.tools.map((t) => t.name) : []),
+        ].filter((name) => tools.some((t) => t.name === name));
+
   current = {
     tools,
+    gatedTools,
     skills,
     agents,
     config,
@@ -103,6 +118,7 @@ export const initRegistry = async (): Promise<Registry> => {
     skills.length > 0 && `${skills.length} skill(s)`,
     agents.length > 0 && `${agents.length} agent(s)`,
     disabled.size > 0 && `${disabled.size} disabled by config`,
+    gatedTools.length > 0 && `${gatedTools.length} need approval`,
   ].filter(Boolean);
   console.log(
     `[dulo] ${tools.length} tools ready` +

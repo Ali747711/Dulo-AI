@@ -8,6 +8,7 @@ import { runAgent } from "./agent.js";
 import type { Tool } from "./types.js";
 import { FALLBACK_MODELS, MODEL } from "./llm.js";
 import { closeRegistry, getRegistry, initRegistry } from "./registry.js";
+import { createGate } from "./permissions.js";
 import {
   cancelRun,
   createRun,
@@ -105,6 +106,31 @@ const handleRun = async (req: IncomingMessage, res: ServerResponse): Promise<voi
 
   const handle = createRun({ query, model: model ?? MODEL });
   const short = handle.id.slice(0, 8);
+
+  // The gate lives on the run, so a reply can find it by run id even if the
+  // client that asked has since reconnected on a different socket.
+  let currentStep = 0;
+  handle.gate = createGate({
+    gated: getRegistry().gatedTools,
+    onAsk: (ask) =>
+      publish(handle, {
+        type: "permission.ask",
+        step: currentStep,
+        id: ask.id,
+        tool: ask.tool,
+        args: ask.args,
+      }),
+    onSettled: (id, tool, decision) =>
+      publish(handle, {
+        type: "permission.resolved",
+        step: currentStep,
+        id,
+        tool,
+        decision,
+      }),
+  });
+  // Cancelling must not leave a tool waiting forever on an answer.
+  handle.controller.signal.addEventListener("abort", () => handle.gate?.abandon());
   console.log(`[run ${short}] ${query}`);
 
   openSseStream(res);
@@ -120,8 +146,12 @@ const handleRun = async (req: IncomingMessage, res: ServerResponse): Promise<voi
       model,
       maxSteps,
       temperature,
-      onEvent: (event) => publish(handle, event),
+      onEvent: (event) => {
+        if (event.type === "step.start") currentStep = event.step;
+        publish(handle, event);
+      },
       signal: handle.controller.signal,
+      requestPermission: (call) => handle.gate!.request(call),
     });
     publish(handle, { type: "run.end", ...result });
     const detail = result.error ? `: ${result.error}` : "";
@@ -139,8 +169,44 @@ const handleRun = async (req: IncomingMessage, res: ServerResponse): Promise<voi
     });
     console.error(`[run ${short}] crashed:`, message);
   } finally {
+    handle.gate?.abandon();
     await finish(handle);
   }
+};
+
+const PermissionReply = z.object({
+  decision: z.enum(["allow", "deny", "always"]),
+});
+
+/** Answer one pending permission request. */
+const handlePermissionReply = async (
+  req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+  requestId: string,
+): Promise<void> => {
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (error) {
+    json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  const parsed = PermissionReply.safeParse(body);
+  if (!parsed.success) {
+    json(res, 400, { error: "decision must be allow, deny or always" });
+    return;
+  }
+  const handle = getRun(runId);
+  if (!handle?.gate) {
+    json(res, 404, { error: `no run ${runId}` });
+    return;
+  }
+  const settled = handle.gate.resolve(requestId, parsed.data.decision);
+  json(res, settled ? 200 : 409, {
+    settled,
+    ...(settled ? {} : { error: "no pending request with that id" }),
+  });
 };
 
 /** Reattach to a run already in progress, or replay one that has finished. */
@@ -234,6 +300,14 @@ const server = createServer((req, res) => {
   if (req.method === "GET" && streamMatch) {
     const after = Number(url.searchParams.get("after") ?? 0);
     void handleReattach(res, streamMatch[1], Number.isFinite(after) ? after : 0);
+    return;
+  }
+
+  const permissionMatch = url.pathname.match(
+    /^\/api\/run\/([\w-]{1,64})\/permission\/([\w-]{1,64})$/,
+  );
+  if (req.method === "POST" && permissionMatch) {
+    void handlePermissionReply(req, res, permissionMatch[1], permissionMatch[2]);
     return;
   }
 

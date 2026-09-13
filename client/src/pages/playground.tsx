@@ -39,12 +39,18 @@ import {
   cancelRun,
   createRun,
   fetchRuns,
+  replyPermission,
   replayRun,
   streamRun,
 } from "@/lib/agent-client"
 import { formatDuration, formatJson, shortModel } from "@/lib/format"
 import { useStore } from "@/lib/store"
-import type { Run, RunStep, ToolCallRecord } from "@/lib/types"
+import type {
+  PendingPermission,
+  Run,
+  RunStep,
+  ToolCallRecord,
+} from "@/lib/types"
 
 const SUGGESTIONS = [
   "What time is it and what is 15 * 8?",
@@ -52,6 +58,76 @@ const SUGGESTIONS = [
   "What's the weather in Seoul?",
   "Show me system info",
 ]
+
+/** manage_todos returns a checklist; showing it as one beats raw JSON. */
+function TodoList({ text }: { text: string }) {
+  const [summary, ...items] = text.split("\n")
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className="text-xs text-muted-foreground">{summary}</span>
+      <ul className="flex min-w-0 flex-col gap-1">
+        {items.map((line, i) => {
+          const done = line.startsWith("[x]")
+          const active = line.startsWith("[~]")
+          return (
+            <li
+              key={i}
+              className={
+                "flex min-w-0 items-start gap-2 text-sm " +
+                (done ? "text-muted-foreground line-through" : "")
+              }
+            >
+              <span aria-hidden className="font-mono text-xs leading-5">
+                {done ? "✓" : active ? "▸" : "○"}
+              </span>
+              <span className="min-w-0 break-words">{line.slice(4)}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+/** A gated tool is paused until the user answers. */
+function PermissionPrompt({
+  permission,
+  onDecide,
+}: {
+  permission: PendingPermission
+  onDecide: (decision: "allow" | "deny" | "always") => void
+}) {
+  return (
+    <Alert>
+      <AlertTitle className="flex min-w-0 flex-wrap items-center gap-2">
+        <Badge variant="outline">{permission.tool}</Badge>
+        wants to run
+      </AlertTitle>
+      <AlertDescription className="flex min-w-0 flex-col gap-3">
+        <CodeBlock>{formatJson(permission.args)}</CodeBlock>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => onDecide("allow")}>
+            Allow once
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onDecide("always")}
+          >
+            Always in this run
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onDecide("deny")}
+          >
+            Deny
+          </Button>
+        </div>
+      </AlertDescription>
+    </Alert>
+  )
+}
 
 function ToolCallRow({ call }: { call: ToolCallRecord }) {
   return (
@@ -76,7 +152,12 @@ function ToolCallRow({ call }: { call: ToolCallRecord }) {
           </code>
         )}
       </div>
-      {!call.pending && <CodeBlock>{call.result}</CodeBlock>}
+      {!call.pending &&
+        (call.tool === "manage_todos" && !call.isError ? (
+          <TodoList text={call.result} />
+        ) : (
+          <CodeBlock>{call.result}</CodeBlock>
+        ))}
     </div>
   )
 }
@@ -126,8 +207,17 @@ function StepCard({
   )
 }
 
-function RunView({ run, onStop }: { run: Run; onStop: () => void }) {
+function RunView({
+  run,
+  onStop,
+  onDecide,
+}: {
+  run: Run
+  onStop: () => void
+  onDecide: (id: string, decision: "allow" | "deny" | "always") => void
+}) {
   const running = run.status === "running"
+  const pending = run.permissions ?? []
   return (
     <Card>
       <CardHeader>
@@ -155,6 +245,13 @@ function RunView({ run, onStop }: { run: Run; onStop: () => void }) {
             Connecting to the harness…
           </div>
         )}
+        {pending.map((permission) => (
+          <PermissionPrompt
+            key={permission.id}
+            permission={permission}
+            onDecide={(decision) => onDecide(permission.id, decision)}
+          />
+        ))}
         {run.steps.map((step, i) => (
           <StepCard
             key={step.index}
@@ -163,6 +260,11 @@ function RunView({ run, onStop }: { run: Run; onStop: () => void }) {
             running={running}
           />
         ))}
+        {(run.condensedAt?.length ?? 0) > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Older steps were condensed to stay inside the context window.
+          </p>
+        )}
         {run.error && (
           <Alert variant="destructive">
             <AlertTitle>Run {run.status}</AlertTitle>
@@ -278,6 +380,16 @@ export function PlaygroundPage() {
       cancelledEffect = true
     }
   }, [health.status, state.settings.apiBaseUrl, dispatch])
+
+  const decide = (id: string, decision: "allow" | "deny" | "always") => {
+    const serverId = activeRun?.serverId
+    if (!serverId) return
+    void replyPermission(state.settings.apiBaseUrl, serverId, id, decision).then(
+      (ok) => {
+        if (!ok) toast.error("The harness did not accept that decision")
+      }
+    )
+  }
 
   // A merged run has no steps until its log is replayed from the harness.
   const select = (run: Run) => {
@@ -418,7 +530,11 @@ export function PlaygroundPage() {
 
       <div className="min-w-0 xl:col-span-3">
         {activeRun ? (
-          <RunView run={activeRun} onStop={() => void stop()} />
+          <RunView
+            run={activeRun}
+            onStop={() => void stop()}
+            onDecide={decide}
+          />
         ) : (
           <Empty className="h-full min-h-72 border">
             <EmptyHeader>

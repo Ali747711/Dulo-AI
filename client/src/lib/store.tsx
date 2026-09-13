@@ -103,6 +103,24 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
               ],
         }
       })
+    case "permission.ask":
+      return {
+        ...run,
+        permissions: [
+          ...(run.permissions ?? []).filter((p) => p.id !== event.id),
+          { id: event.id, step: event.step, tool: event.tool, args: event.args },
+        ],
+      }
+    case "permission.resolved":
+      return {
+        ...run,
+        permissions: (run.permissions ?? []).filter((p) => p.id !== event.id),
+      }
+    case "context.condensed":
+      return {
+        ...run,
+        condensedAt: [...(run.condensedAt ?? []), event.step],
+      }
     case "assistant.delta":
       return updateStep(run, event.step, (s) => ({
         ...s,
@@ -124,6 +142,7 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
         reason: event.reason,
         usage: event.usage,
         durationMs: event.durationMs,
+        permissions: [],
       }
   }
 }

@@ -24,16 +24,35 @@ const McpServer = z
     message: "an MCP server needs exactly one of `command` or `url`",
   });
 
+const Approval = z.object({
+  /**
+   * "ask" pauses a gated tool until a human answers. "auto" runs everything
+   * unasked, which is how Dulo behaved before the gate existed.
+   */
+  mode: z.enum(["ask", "auto"]).default("ask"),
+  /** Tool names that need approval. Omit to use the built-in list. */
+  tools: z.array(z.string()).optional(),
+  /** Also gate every tool coming from an MCP server. They are unsandboxed. */
+  gateMcpTools: z.boolean().default(true),
+});
+
 const ConfigSchema = z.object({
   /** Tool names to leave out of the registry entirely. */
   disabledTools: z.array(z.string()).default([]),
+  approval: Approval.default({ mode: "ask", gateMcpTools: true }),
   mcpServers: z.record(z.string(), McpServer).default({}),
 });
 
 export type McpServerConfig = z.infer<typeof McpServer>;
 export type DuloConfig = z.infer<typeof ConfigSchema>;
 
-export const DEFAULT_CONFIG: DuloConfig = { disabledTools: [], mcpServers: {} };
+export type ApprovalConfig = z.infer<typeof Approval>;
+
+export const DEFAULT_CONFIG: DuloConfig = {
+  disabledTools: [],
+  approval: { mode: "ask", gateMcpTools: true },
+  mcpServers: {},
+};
 
 /**
  * Read dulo.config.json. A missing file is normal and yields defaults; a

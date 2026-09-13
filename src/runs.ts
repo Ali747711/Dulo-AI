@@ -11,6 +11,7 @@ import type { ServerResponse } from "node:http";
 import path from "node:path";
 
 import type { RunEvent, RunStatus, StoredEvent } from "./events.js";
+import type { Gate } from "./permissions.js";
 
 const RUNS_DIR = path.join(process.cwd(), "runs");
 const INDEX_FILE = path.join(RUNS_DIR, "index.json");
@@ -30,8 +31,10 @@ export interface RunSummary {
   durationMs: number;
 }
 
-interface RunHandle extends RunSummary {
+export interface RunHandle extends RunSummary {
   events: StoredEvent[];
+  /** Set by the server once the run starts; answers arrive out of band. */
+  gate?: Gate;
   controller: AbortController;
   subscribers: Set<ServerResponse>;
   seq: number;
