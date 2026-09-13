@@ -59,6 +59,15 @@ const SendMessage = z
 
 const PermissionReply = z.object({ decision: z.enum(["allow", "deny", "always"]) });
 
+const PatchQueueItem = z
+  .object({
+    parts: z.array(UserPart).min(1).max(50).optional(),
+    parentId: z.string().min(1).max(64).optional(),
+    model: Settings.model,
+    agent: Settings.agent,
+  })
+  .refine((b) => Object.keys(b).length > 0, { message: "at least one field required" });
+
 /** The pre-session RunRequest, unchanged, so old clients are not broken. */
 const LegacyRun = z.object({
   query: z.string().trim().min(1).max(4000),
@@ -213,6 +222,24 @@ export const handleSessionRoutes = async (
       const settled = runner.resolvePermission(id, perm[1], parsed.data.decision);
       json(res, settled ? 200 : 409, { settled }, cors);
       return true;
+    }
+    const queueItem = rest.match(/^queue\/([\w-]{1,64})$/);
+    if (queueItem && method === "PATCH") {
+      const parsed = PatchQueueItem.safeParse(await readJsonBody(req).catch(() => null));
+      if (!parsed.success) return json(res, 400, { error: "invalid body", issues: parsed.error.issues }, cors), true;
+      const updated = await runner.patchQueueItem(id, queueItem[1], parsed.data);
+      return updated ? (json(res, 200, updated, cors), true) : (json(res, 404, { error: `no queued message ${queueItem[1]}` }, cors), true);
+    }
+    if (queueItem && method === "DELETE") {
+      const removed = await runner.removeQueueItem(id, queueItem[1]);
+      return removed ? (json(res, 204, undefined, cors), true) : (json(res, 404, { error: `no queued message ${queueItem[1]}` }, cors), true);
+    }
+    const queueSend = rest.match(/^queue\/([\w-]{1,64})\/send$/);
+    if (queueSend && method === "POST") {
+      const result = await runner.sendQueueItem(id, queueSend[1]);
+      if (!result) return json(res, 404, { error: `no queued message ${queueSend[1]}` }, cors), true;
+      if (!result.sent) return json(res, 409, { error: "a turn is running" }, cors), true;
+      return json(res, 200, { turnId: result.turnId, userMessageId: result.userMessageId, assistantMessageId: result.assistantMessageId }, cors), true;
     }
     return false;
   }

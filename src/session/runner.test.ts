@@ -340,4 +340,68 @@ describe("runner", () => {
       useStubLlm(stub);
     }
   });
+
+  describe("queue item mutations", () => {
+    // A slow stub (matching the pattern used above for cancellation tests) so
+    // "one" is genuinely still running when cancel() fires — with the shared
+    // fast stub, "one" can complete before cancel() ever reaches the turn,
+    // which auto-continues into "two" (Task 2) and leaves the queue empty
+    // instead of held.
+    const heldQueue = async (): Promise<{ sessionId: string; queuedId: string }> => {
+      const slow = await startStubLlm(() => ({ text: "slow", delayMs: 5_000 }));
+      useStubLlm(slow);
+      try {
+        const session = await runner.createSession();
+        const a = await runner.startTurn(session.id, { parts: text("one") });
+        assert.ok(a && a.started);
+        const b = await runner.startTurn(session.id, { parts: text("two") });
+        assert.ok(b && !b.started && b.reason === "queued");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert.equal(runner.cancel(session.id), true);
+        await runner.awaitIdle(session.id);
+        return { sessionId: session.id, queuedId: b.queued.id };
+      } finally {
+        await slow.close();
+        useStubLlm(stub);
+      }
+    };
+
+    it("patches a queued message's fields and rejects an unknown id", async () => {
+      const { sessionId, queuedId } = await heldQueue();
+      const patched = await runner.patchQueueItem(sessionId, queuedId, { model: "some/model" });
+      assert.equal(patched?.model, "some/model");
+      assert.equal((await runner.getSnapshot(sessionId))?.session.queue[0].model, "some/model");
+      assert.equal(await runner.patchQueueItem(sessionId, "ghost", { model: "x" }), null);
+    });
+
+    it("removes a queued message and reports false for an unknown id", async () => {
+      const { sessionId, queuedId } = await heldQueue();
+      assert.equal(await runner.removeQueueItem(sessionId, "ghost"), false);
+      assert.equal(await runner.removeQueueItem(sessionId, queuedId), true);
+      assert.equal((await runner.getSnapshot(sessionId))?.session.queue.length, 0);
+    });
+
+    it("sends a held queued message on demand, and refuses while a turn is running", async () => {
+      const { sessionId, queuedId } = await heldQueue();
+
+      const sent = await runner.sendQueueItem(sessionId, queuedId);
+      assert.ok(sent?.sent);
+      assert.equal((await runner.getSnapshot(sessionId))?.session.queue.length, 0);
+      await runner.awaitIdle(sessionId);
+
+      const c = await runner.startTurn(sessionId, { parts: text("three") });
+      assert.ok(c && c.started);
+      const d = await runner.startTurn(sessionId, { parts: text("four") });
+      assert.ok(d && !d.started && d.reason === "queued");
+      const busy = await runner.sendQueueItem(sessionId, d.queued.id);
+      assert.deepEqual(busy, { sent: false, reason: "running" });
+      await runner.awaitIdle(sessionId);
+    });
+
+    it("returns null/false for a queue action on an unknown session", async () => {
+      assert.equal(await runner.patchQueueItem("ghost-session", "x", {}), null);
+      assert.equal(await runner.removeQueueItem("ghost-session", "x"), false);
+      assert.equal(await runner.sendQueueItem("ghost-session", "x"), null);
+    });
+  });
 });

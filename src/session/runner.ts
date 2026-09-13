@@ -48,6 +48,10 @@ export type StartResult =
   | { started: false; reason: "bad-parent" }
   | { started: false; reason: "queued"; queued: QueuedMessage };
 
+export type SendQueuedResult =
+  | { sent: true; turnId: string; userMessageId: string; assistantMessageId: string }
+  | { sent: false; reason: "running" };
+
 export interface Snapshot {
   session: Session;
   messages: ChatMessage[];
@@ -126,6 +130,16 @@ export interface Runner {
   startTurn(id: string, input: TurnInput): Promise<StartResult | null>;
   cancel(id: string): boolean;
   resolvePermission(id: string, requestId: string, decision: PermissionDecision): boolean;
+  /** null = no such session or no such queued message. */
+  patchQueueItem(
+    id: string,
+    msgId: string,
+    patch: Partial<Pick<QueuedMessage, "parts" | "parentId" | "model" | "agent">>,
+  ): Promise<QueuedMessage | null>;
+  /** true = removed. false = no such session or no such queued message. */
+  removeQueueItem(id: string, msgId: string): Promise<boolean>;
+  /** null = no such session or no such queued message. */
+  sendQueueItem(id: string, msgId: string): Promise<SendQueuedResult | null>;
   /** Attach an SSE response. Backlog after `after`, then live. */
   subscribe(id: string, res: ServerResponse, after: number, untilTurnEnd?: string): Promise<boolean>;
   eventsAfter(id: string, after: number): Promise<SessionEvent[]>;
@@ -512,6 +526,51 @@ export const createRunner = (store: SessionStore): Runner => {
     resolvePermission(id, requestId, decision) {
       const entry = live.get(id);
       return entry?.turn ? entry.turn.gate.resolve(requestId, decision) : false;
+    },
+
+    async patchQueueItem(id, msgId, patch) {
+      const entry = await load(id);
+      if (!entry) return null;
+      const idx = entry.session.queue.findIndex((q) => q.id === msgId);
+      if (idx === -1) return null;
+      const updated: QueuedMessage = { ...entry.session.queue[idx], ...patch };
+      const queue = entry.session.queue.slice();
+      queue[idx] = updated;
+      await patchSession(entry, { queue });
+      return updated;
+    },
+
+    async removeQueueItem(id, msgId) {
+      const entry = await load(id);
+      if (!entry) return false;
+      const queue = entry.session.queue.filter((q) => q.id !== msgId);
+      if (queue.length === entry.session.queue.length) return false;
+      await patchSession(entry, { queue });
+      return true;
+    },
+
+    async sendQueueItem(id, msgId) {
+      const entry = await load(id);
+      if (!entry) return null;
+      const item = entry.session.queue.find((q) => q.id === msgId);
+      if (!item) return null;
+      if (entry.turn) return { sent: false, reason: "running" };
+      await patchSession(entry, { queue: entry.session.queue.filter((q) => q.id !== msgId) });
+      const result = await beginTurn(entry, {
+        parts: item.parts,
+        parentId: item.parentId,
+        model: item.model,
+        agent: item.agent,
+        temperature: item.temperature,
+        maxSteps: item.maxSteps,
+        messageId: item.id,
+      });
+      // beginTurn only ever returns started:true here — bad-parent and busy
+      // are both already ruled out above — but the type checker doesn't know
+      // that, so this narrows explicitly rather than asserting.
+      return result.started
+        ? { sent: true, turnId: result.turnId, userMessageId: result.userMessageId, assistantMessageId: result.assistantMessageId }
+        : { sent: false, reason: "running" };
     },
 
     async subscribe(id, res, after, untilTurnEnd) {
