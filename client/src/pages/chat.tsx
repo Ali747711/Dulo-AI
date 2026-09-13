@@ -313,16 +313,17 @@ export function ChatPage() {
       ? "Start a new chat first"
       : undefined
 
-  // A failed turn's user message, if the most recent turn actually failed —
-  // "Retry" resends its exact parts as a sibling of its own parent, per
-  // design §15 ("resend the same user message as a sibling"). lastError and
-  // turns are kept in sync by the same run.end fold, so this is safe to
-  // derive rather than track separately.
-  const lastTurn = selected?.turns[selected.turns.length - 1]
-  const retryTarget =
-    lastTurn?.status === "failed"
-      ? selected?.messages.find((m) => m.id === lastTurn.userMessageId)
-      : undefined
+  // The failed turn's user message — "Retry" resends its exact parts as a
+  // sibling of its own parent, per design §15 ("resend the same user message
+  // as a sibling"). Derived from lastError and the path rather than from
+  // `turns`: the run.end fold updates lastError but deliberately keeps no
+  // turn list, so `turns` is only ever as fresh as the last snapshot and a
+  // live failure would otherwise show no Retry until a reload. After a
+  // failure the head is that turn's assistant message, so the last user
+  // message on the path is the one to resend.
+  const retryTarget = selected?.lastError
+    ? [...path].reverse().find((m) => m.role === "user")
+    : undefined
 
   const retry = async () => {
     if (!selectedId || !retryTarget) return
