@@ -108,7 +108,12 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
         ...run,
         permissions: [
           ...(run.permissions ?? []).filter((p) => p.id !== event.id),
-          { id: event.id, step: event.step, tool: event.tool, args: event.args },
+          {
+            id: event.id,
+            step: event.step,
+            tool: event.tool,
+            args: event.args,
+          },
         ],
       }
     case "permission.resolved":
@@ -144,6 +149,17 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
         durationMs: event.durationMs,
         permissions: [],
       }
+    default:
+      // The legacy stream is the same raw per-session stream a Chat session
+      // uses (src/session/routes.ts), which also carries SessionOnlyEvent
+      // types (message.created, message.completed, queue.updated,
+      // session.updated) interleaved with RunEvents — message.created always
+      // arrives first, before run.start. RunEvent's own union is exhaustive
+      // above, so this default exists only for those session-only types
+      // reaching here at runtime despite the RunEvent-only type annotation;
+      // ignoring them (not spreading `run`) is what stops `undefined` here
+      // turning into a bare `{ lastSeq }` that wipes every other field.
+      return run
   }
 }
 
@@ -177,7 +193,9 @@ const reducer = (state: State, action: Action): State => {
       // Runs the harness knows about but this browser does not. They arrive as
       // summaries with no steps; selecting one replays its log from the server.
       const known = new Set(
-        state.runs.flatMap((r) => [r.id, r.serverId].filter(Boolean) as string[])
+        state.runs.flatMap(
+          (r) => [r.id, r.serverId].filter(Boolean) as string[]
+        )
       )
       const extra = action.runs.filter((r) => !known.has(r.id))
       if (extra.length === 0) return state
