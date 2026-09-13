@@ -5,7 +5,7 @@ conversational agent — multi-turn sessions with memory, a message queue,
 branching, attachments, and per-turn model choice. Written for the agent that
 will implement it; the ordered task list lives in `conversations-plan.md`.
 
-Status: approved 2026-09-13. Plan 1 (session core) implemented 2026-09-13. Plan 2 (chat page) written in `conversations-plan-2-chat.md`, not yet implemented. Owner: Ali. Author: Claude.
+Status: approved 2026-09-13. Plan 1 (session core) and Plan 2 (chat page) implemented 2026-09-13. Owner: Ali. Author: Claude.
 
 ---
 
@@ -496,6 +496,12 @@ New files, each with one job:
 | `client/src/components/chat/composer.tsx` | Textarea (Enter sends, Shift+Enter newline), attachment drop/paste → `PUT files`, model + agent pickers (per turn, default from `session.defaults`), Stop while running, queued chips with Send now / Edit / Remove |
 | `client/src/components/chat/memory-panel.tsx` | Sheet showing `memory.summary`, editable, "covers N messages" |
 | `client/src/components/chat/branch-switcher.tsx` | `‹ 1/2 ›`, calls `PATCH { headId }` |
+
+Implementation note (Plan 2): the thread is built on shadcn's `message-scroller`,
+`message`, `bubble` and `collapsible` primitives rather than the hand-written thread
+sketched above — scrolling, streaming follow and jump-to-latest are theirs. Markdown is
+`react-markdown` + `remark-gfm`; fenced code renders through the existing `CodeBlock`
+without a highlighter, leaving syntax colouring as owner-directed polish.
 
 The existing `PermissionPrompt` renders inline in the thread above the live
 assistant message. The design leaves visual direction to the owner: build these

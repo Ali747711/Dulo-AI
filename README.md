@@ -81,17 +81,25 @@ If a user stops the run or closes the browser tab, an `AbortSignal` immediately 
 
 ## Control Panel Showcase
 
-### 1. Interactive Playground
+### 1. Chat
+
+A conversation with the agent that remembers everything said so far. Sessions live in
+the harness (`/api/sessions`), so a chat survives a refresh, a closed tab, or opening the
+panel from another machine. Each assistant turn renders Markdown with its tool activity
+inline and collapsible; gated tools ask for permission right in the thread; a turn keeps
+running if you navigate away and the page reattaches when you come back.
+
+### 2. Interactive Playground
 Run queries with real-time feedback. Inspect tool execution steps, intermediate outputs, execution duration, and markdown answers.
 
 ![Playground](docs/playground.png)
 
-### 2. Tools & Permissions Manager
+### 3. Tools & Permissions Manager
 Inspect JSON schemas, filter tools by category, and toggle capabilities on/off before launching runs.
 
 ![Tools](docs/tools.png)
 
-### 3. Model & Harness Settings
+### 4. Model & Harness Settings
 Configure primary models, fallback chains, sampling temperature, max step boundaries, and check harness connectivity.
 
 ![Settings](docs/settings.png)
@@ -184,7 +192,7 @@ cd client
 npm start
 ```
 
-Open **http://localhost:5173** in your browser. The header badge turns green once connected to the harness.
+Open **http://localhost:5173** in your browser. The header badge turns green once connected to the harness. **Chat** is where a multi-turn conversation happens; **Playground** runs one-shot queries and inspects their steps in isolation — both are backed by the same session API and history.
 
 ### Command Line Interface (CLI)
 
