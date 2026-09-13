@@ -83,7 +83,7 @@ describe("runner", () => {
     assert.equal(snap?.turns[0].usage?.totalTokens, 15);
   });
 
-  it("refuses a second turn while one is running", async () => {
+  it("queues (rather than refuses) a second turn while one is running", async () => {
     const slow = await startStubLlm(() => ({ text: "slow", delayMs: 300 }));
     useStubLlm(slow);
     try {
@@ -91,7 +91,7 @@ describe("runner", () => {
       const a = await runner.startTurn(session.id, { parts: text("one") });
       assert.ok(a && a.started);
       const b = await runner.startTurn(session.id, { parts: text("two") });
-      assert.deepEqual(b, { started: false, reason: "running" });
+      assert.ok(b && !b.started && b.reason === "queued");
       await runner.awaitIdle(session.id);
     } finally {
       await slow.close();
@@ -122,6 +122,48 @@ describe("runner", () => {
     assert.equal(snap!.session.headId, edited.assistantMessageId);
     // Only the v2 branch was sent to the model on the second turn.
     assert.equal(userCount(stub.calls[1]), 1);
+  });
+
+  it("queues a message instead of rejecting it while a turn is running", async () => {
+    const slow = await startStubLlm(() => ({ text: "slow", delayMs: 300 }));
+    useStubLlm(slow);
+    try {
+      const session = await runner.createSession();
+      const a = await runner.startTurn(session.id, { parts: text("one") });
+      assert.ok(a && a.started);
+      const b = await runner.startTurn(session.id, { parts: text("two") });
+      assert.ok(b && !b.started && b.reason === "queued");
+      assert.equal(b.queued.parts.length, 1);
+      assert.equal((b.queued.parts[0] as { type: "text"; text: string }).text, "two");
+
+      const snap = await runner.getSnapshot(session.id);
+      assert.equal(snap?.session.status, "running"); // the first turn, not idle
+      assert.equal(snap?.session.queue.length, 1);
+      assert.equal(snap?.session.queue[0].id, b.queued.id);
+
+      await runner.awaitIdle(session.id); // lets both turns finish before the next test
+    } finally {
+      await slow.close();
+      useStubLlm(stub);
+    }
+  });
+
+  it("rejects a bad parentId even while a turn is running, without queuing it", async () => {
+    const slow = await startStubLlm(() => ({ text: "slow", delayMs: 300 }));
+    useStubLlm(slow);
+    try {
+      const session = await runner.createSession();
+      const a = await runner.startTurn(session.id, { parts: text("one") });
+      assert.ok(a && a.started);
+      const b = await runner.startTurn(session.id, { parts: text("two"), parentId: "ghost" });
+      assert.deepEqual(b, { started: false, reason: "bad-parent" });
+      const snap = await runner.getSnapshot(session.id);
+      assert.equal(snap?.session.queue.length, 0);
+      await runner.awaitIdle(session.id);
+    } finally {
+      await slow.close();
+      useStubLlm(stub);
+    }
   });
 
   it("cancel ends the turn, fills dangling tool results and keeps the session usable", async () => {

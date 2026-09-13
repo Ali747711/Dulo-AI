@@ -131,9 +131,10 @@ const startOrReject = async (
   }
   if (result === null) return json(res, 404, { error: `no session ${sessionId}` }, corsHeaders);
   if (!result.started) {
-    // Plan 3 turns "running" into a 202 with a queued message.
-    const status = result.reason === "running" ? 409 : 400;
-    return json(res, status, { error: result.reason === "running" ? "a turn is running" : "parentId is not in this session" }, corsHeaders);
+    if (result.reason === "queued") {
+      return json(res, 202, { queued: result.queued }, corsHeaders);
+    }
+    return json(res, 400, { error: "parentId is not in this session" }, corsHeaders);
   }
   json(res, 200, {
     turnId: result.turnId,

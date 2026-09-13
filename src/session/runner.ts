@@ -45,7 +45,8 @@ export interface TurnInput extends TurnSettings {
 
 export type StartResult =
   | { started: true; turnId: string; userMessageId: string; assistantMessageId: string }
-  | { started: false; reason: "running" | "bad-parent" };
+  | { started: false; reason: "bad-parent" }
+  | { started: false; reason: "queued"; queued: QueuedMessage };
 
 export interface Snapshot {
   session: Session;
@@ -272,6 +273,116 @@ export const createRunner = (store: SessionStore): Runner => {
     // Plan 3 adds: if completed and queue non-empty, dequeue and startTurn.
   };
 
+  /**
+   * Actually begin a turn on an already-validated entry: no busy check, no
+   * parentId validation — callers (startTurn below, and the auto-dequeue path
+   * Task 2 adds inside execute()) do both first. Always returns the
+   * `started: true` variant; the other StartResult variants exist for
+   * startTurn's own early returns, not for anything beginTurn itself can hit.
+   */
+  const beginTurn = async (entry: LiveSession, input: TurnInput): Promise<StartResult> => {
+    const id = entry.session.id;
+    const config = resolveRunConfig({
+      model: input.model ?? entry.session.defaults.model,
+      agent: input.agent ?? entry.session.defaults.agent,
+      temperature: input.temperature ?? entry.session.defaults.temperature,
+      maxSteps: input.maxSteps ?? entry.session.defaults.maxSteps,
+    });
+    const tools = input.enabledTools
+      ? config.tools.filter((t) => input.enabledTools!.includes(t.name))
+      : config.tools;
+
+    const now = new Date().toISOString();
+    const turnId = randomUUID();
+    const parentId = input.parentId === undefined ? entry.session.headId : input.parentId;
+    const userMessage: ChatMessage = {
+      id: input.messageId ?? randomUUID(),
+      sessionId: id,
+      parentId,
+      role: "user",
+      parts: input.parts,
+      turnId,
+      createdAt: now,
+    };
+    const assistant: ChatMessage = {
+      id: randomUUID(),
+      sessionId: id,
+      parentId: userMessage.id,
+      role: "assistant",
+      parts: [],
+      turnId,
+      createdAt: now,
+    };
+
+    entry.messages.push(userMessage);
+    await store.appendMessage(userMessage);
+    const firstMessage = entry.messages.length === 1;
+    await patchSession(entry, {
+      headId: userMessage.id,
+      status: "running",
+      ...(firstMessage && entry.session.title === DEFAULT_TITLE
+        ? { title: titleFrom(input.parts) }
+        : {}),
+    });
+    publish(entry, { type: "message.created", message: userMessage }, turnId);
+
+    const turn: Turn = {
+      id: turnId,
+      sessionId: id,
+      userMessageId: userMessage.id,
+      assistantMessageId: assistant.id,
+      model: config.model,
+      agent: config.agent,
+      temperature: config.temperature,
+      maxSteps: config.maxSteps,
+      status: "running",
+      startedAt: now,
+      durationMs: 0,
+    };
+
+    const controller = new AbortController();
+    const liveTurn: LiveTurn = {
+      turn,
+      assistant,
+      controller,
+      step: 0,
+      gate: createGate({
+        gated: getRegistry().gatedTools,
+        onAsk: (ask) =>
+          publish(entry, {
+            type: "permission.ask", step: liveTurn.step, id: ask.id, tool: ask.tool, args: ask.args,
+          }, turnId),
+        onSettled: (requestId, tool, decision) =>
+          publish(entry, {
+            type: "permission.resolved", step: liveTurn.step, id: requestId, tool, decision,
+          }, turnId),
+      }),
+      done: Promise.resolve(),
+    };
+    controller.signal.addEventListener("abort", () => liveTurn.gate.abandon());
+    entry.turn = liveTurn; // see execute()'s auto-continue branch (Task 2) for why
+    // this line must *replace* entry.turn rather than run after it was cleared
+    turnToSession.set(turnId, id);
+
+    publish(entry, {
+      type: "run.start",
+      runId: turnId,
+      query: textOf(input.parts),
+      model: config.model,
+      startedAt: now,
+      sessionId: id,
+      turnId,
+      userMessageId: userMessage.id,
+      assistantMessageId: assistant.id,
+    }, turnId);
+
+    liveTurn.done = execute(entry, liveTurn, config, tools).catch((error) => {
+      console.error(`[session ${id.slice(0, 8)}] turn crashed:`, messageOf(error));
+    });
+
+    return { started: true, turnId, userMessageId: userMessage.id, assistantMessageId: assistant.id };
+  };
+
   const runner: Runner = {
     async createSession(input = {}) {
       const session = await store.createSession({
@@ -353,109 +464,24 @@ export const createRunner = (store: SessionStore): Runner => {
     async startTurn(id, input) {
       const entry = await load(id);
       if (!entry) return null;
-      if (entry.turn) return { started: false, reason: "running" };
       if (input.parentId && !entry.messages.some((m) => m.id === input.parentId)) {
         return { started: false, reason: "bad-parent" };
       }
-
-      const config = resolveRunConfig({
-        model: input.model ?? entry.session.defaults.model,
-        agent: input.agent ?? entry.session.defaults.agent,
-        temperature: input.temperature ?? entry.session.defaults.temperature,
-        maxSteps: input.maxSteps ?? entry.session.defaults.maxSteps,
-      });
-      const tools = input.enabledTools
-        ? config.tools.filter((t) => input.enabledTools!.includes(t.name))
-        : config.tools;
-
-      const now = new Date().toISOString();
-      const turnId = randomUUID();
-      const parentId = input.parentId === undefined ? entry.session.headId : input.parentId;
-      const userMessage: ChatMessage = {
-        id: input.messageId ?? randomUUID(),
-        sessionId: id,
-        parentId,
-        role: "user",
-        parts: input.parts,
-        turnId,
-        createdAt: now,
-      };
-      const assistant: ChatMessage = {
-        id: randomUUID(),
-        sessionId: id,
-        parentId: userMessage.id,
-        role: "assistant",
-        parts: [],
-        turnId,
-        createdAt: now,
-      };
-
-      entry.messages.push(userMessage);
-      await store.appendMessage(userMessage);
-      const firstMessage = entry.messages.length === 1;
-      await patchSession(entry, {
-        headId: userMessage.id,
-        status: "running",
-        ...(firstMessage && entry.session.title === DEFAULT_TITLE
-          ? { title: titleFrom(input.parts) }
-          : {}),
-      });
-      publish(entry, { type: "message.created", message: userMessage }, turnId);
-
-      const turn: Turn = {
-        id: turnId,
-        sessionId: id,
-        userMessageId: userMessage.id,
-        assistantMessageId: assistant.id,
-        model: config.model,
-        agent: config.agent,
-        temperature: config.temperature,
-        maxSteps: config.maxSteps,
-        status: "running",
-        startedAt: now,
-        durationMs: 0,
-      };
-
-      const controller = new AbortController();
-      const liveTurn: LiveTurn = {
-        turn,
-        assistant,
-        controller,
-        step: 0,
-        gate: createGate({
-          gated: getRegistry().gatedTools,
-          onAsk: (ask) =>
-            publish(entry, {
-              type: "permission.ask", step: liveTurn.step, id: ask.id, tool: ask.tool, args: ask.args,
-            }, turnId),
-          onSettled: (requestId, tool, decision) =>
-            publish(entry, {
-              type: "permission.resolved", step: liveTurn.step, id: requestId, tool, decision,
-            }, turnId),
-        }),
-        done: Promise.resolve(),
-      };
-      controller.signal.addEventListener("abort", () => liveTurn.gate.abandon());
-      entry.turn = liveTurn;
-      turnToSession.set(turnId, id);
-
-      publish(entry, {
-        type: "run.start",
-        runId: turnId,
-        query: textOf(input.parts),
-        model: config.model,
-        startedAt: now,
-        sessionId: id,
-        turnId,
-        userMessageId: userMessage.id,
-        assistantMessageId: assistant.id,
-      }, turnId);
-
-      liveTurn.done = execute(entry, liveTurn, config, tools).catch((error) => {
-        console.error(`[session ${id.slice(0, 8)}] turn crashed:`, messageOf(error));
-      });
-
-      return { started: true, turnId, userMessageId: userMessage.id, assistantMessageId: assistant.id };
+      if (entry.turn) {
+        const queued: QueuedMessage = {
+          id: input.messageId ?? randomUUID(),
+          parts: input.parts,
+          ...(input.parentId ? { parentId: input.parentId } : {}),
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.agent ? { agent: input.agent } : {}),
+          ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+          ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
+          queuedAt: new Date().toISOString(),
+        };
+        await patchSession(entry, { queue: [...entry.session.queue, queued] });
+        return { started: false, reason: "queued", queued };
+      }
+      return beginTurn(entry, input);
     },
 
     cancel(id) {
