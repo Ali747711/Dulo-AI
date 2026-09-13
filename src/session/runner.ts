@@ -258,19 +258,37 @@ export const createRunner = (store: SessionStore): Runner => {
     publish(entry, { type: "run.end", ...result, sessionId: entry.session.id, turnId }, turnId);
     publish(entry, { type: "message.completed", message: assistant }, turnId);
 
-    entry.turn = undefined;
-    await patchSession(entry, {
-      headId: assistant.id,
-      status: "idle",
-      defaults: {
-        ...entry.session.defaults,
-        model: config.model,
-        ...(config.agent ? { agent: config.agent } : {}),
-        ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
-        maxSteps: config.maxSteps,
-      },
-    });
-    // Plan 3 adds: if completed and queue non-empty, dequeue and startTurn.
+    const defaults = {
+      ...entry.session.defaults,
+      model: config.model,
+      ...(config.agent ? { agent: config.agent } : {}),
+      ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
+      maxSteps: config.maxSteps,
+    };
+
+    const next = result.status === "completed" ? entry.session.queue[0] : undefined;
+    if (next) {
+      // Dequeue and begin the next turn without ever clearing entry.turn in
+      // between — beginTurn() replaces it directly (Task 1). A session is
+      // therefore never observably idle between an auto-continued turn and
+      // the one before it; see this task's own note above for why that
+      // matters and why it isn't proven by a timing-based test.
+      // queue.updated (this patchSession call) is published before
+      // beginTurn's own message.created, matching design §8's ordering.
+      await patchSession(entry, { headId: assistant.id, queue: entry.session.queue.slice(1), defaults });
+      await beginTurn(entry, {
+        parts: next.parts,
+        parentId: next.parentId,
+        model: next.model,
+        agent: next.agent,
+        temperature: next.temperature,
+        maxSteps: next.maxSteps,
+        messageId: next.id,
+      });
+    } else {
+      entry.turn = undefined;
+      await patchSession(entry, { headId: assistant.id, status: "idle", defaults });
+    }
   };
 
   /**
@@ -532,8 +550,14 @@ export const createRunner = (store: SessionStore): Runner => {
     },
 
     async awaitIdle(id) {
-      const entry = live.get(id);
-      if (entry?.turn) await entry.turn.done;
+      for (;;) {
+        const entry = live.get(id);
+        if (!entry?.turn) return;
+        const current = entry.turn;
+        await current.done;
+        if (entry.turn === current) return; // no auto-continued turn replaced it
+        // else: an auto-continued turn took its place — wait for that one too.
+      }
     },
 
     async recover() {

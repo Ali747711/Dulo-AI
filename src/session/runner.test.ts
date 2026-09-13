@@ -166,6 +166,56 @@ describe("runner", () => {
     }
   });
 
+  it("auto-continues queued messages one at a time after each completed turn", async () => {
+    const session = await runner.createSession();
+    const a = await runner.startTurn(session.id, { parts: text("one") });
+    assert.ok(a && a.started);
+    const b = await runner.startTurn(session.id, { parts: text("two") });
+    assert.ok(b && !b.started && b.reason === "queued");
+    const c = await runner.startTurn(session.id, { parts: text("three") });
+    assert.ok(c && !c.started && c.reason === "queued");
+
+    await runner.awaitIdle(session.id); // must wait through the whole chain, not just turn 1
+
+    const snap = await runner.getSnapshot(session.id);
+    assert.equal(snap?.session.status, "idle");
+    assert.equal(snap?.session.queue.length, 0);
+    const answers = snap!.messages
+      .filter((m) => m.role === "assistant")
+      .map((m) => m.parts.map((p) => (p.type === "text" ? p.text : "")).join(""));
+    assert.deepEqual(answers, [
+      "seen 1 user messages",
+      "seen 2 user messages",
+      "seen 3 user messages",
+    ]);
+    assert.deepEqual(snap?.turns.map((t) => t.status), ["completed", "completed", "completed"]);
+  });
+
+  it("holds the queue after a cancelled turn instead of auto-continuing", async () => {
+    const slow = await startStubLlm(() => ({ text: "slow", delayMs: 5_000 }));
+    useStubLlm(slow);
+    try {
+      const session = await runner.createSession();
+      const a = await runner.startTurn(session.id, { parts: text("one") });
+      assert.ok(a && a.started);
+      const b = await runner.startTurn(session.id, { parts: text("two") });
+      assert.ok(b && !b.started && b.reason === "queued");
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(runner.cancel(session.id), true);
+      await runner.awaitIdle(session.id);
+
+      const snap = await runner.getSnapshot(session.id);
+      assert.equal(snap?.turns[0].status, "cancelled");
+      assert.equal(snap?.session.status, "idle");
+      assert.equal(snap?.session.queue.length, 1); // held, not auto-sent
+      assert.equal(snap?.session.queue[0].id, b.queued.id);
+    } finally {
+      await slow.close();
+      useStubLlm(stub);
+    }
+  });
+
   it("cancel ends the turn, fills dangling tool results and keeps the session usable", async () => {
     const slow = await startStubLlm((_req, i) =>
       i === 0
