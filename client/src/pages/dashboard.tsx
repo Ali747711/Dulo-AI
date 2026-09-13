@@ -226,7 +226,7 @@ export function DashboardPage({
                         {shortModel(run.model)}
                       </TableCell>
                       <TableCell>
-                        <RunStatusBadge status={run.status} />
+                        <RunStatusBadge status={run.status} reason={run.reason} />
                       </TableCell>
                       <TableCell className="hidden text-right tabular-nums 2xl:table-cell">
                         {formatDuration(run.durationMs)}

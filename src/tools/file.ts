@@ -11,6 +11,10 @@ import type { Tool } from "../types.js";
 const ROOT = process.cwd();
 const IGNORED = new Set(["node_modules", ".git", "dist", "build"]);
 
+/** Caps on read_file, so one oversized log cannot flood the context window. */
+const MAX_READ_BYTES = 200_000;
+const MAX_READ_LINES = 2000;
+
 /**
  * Resolve a user-supplied path safely.
  * Checks path boundaries and traverses real paths to prevent symlink bypasses.
@@ -77,7 +81,9 @@ export const listFilesTool: Tool = {
 
 export const readFileTool: Tool = {
   name: "read_file",
-  description: "Read the full text content of a file in the project.",
+  description:
+    `Read the text content of a file in the project. Output is capped at ` +
+    `${MAX_READ_LINES} lines; use grep_files to find what you need in a larger file.`,
   parameters: {
     type: "object",
     properties: {
@@ -85,13 +91,58 @@ export const readFileTool: Tool = {
         type: "string",
         description: "File path relative to the project root",
       },
+      offset: {
+        type: "number",
+        description: "1-based line to start from. Default: 1",
+        default: 1,
+      },
     },
     required: ["path"],
   },
-  execute: async ({ path: filePath }: { path: string }) => {
+  execute: async ({
+    path: filePath,
+    offset = 1,
+  }: {
+    path: string;
+    offset?: number;
+  }) => {
     try {
       const safePath = await resolveSafe(filePath);
-      return await readFile(safePath, "utf8");
+      const info = await stat(safePath);
+      if (info.isDirectory()) {
+        throw new Error(`"${filePath}" is a directory, use list_files instead`);
+      }
+
+      const buffer = await readFile(safePath);
+      // A NUL byte early in the file means this is not text; decoding it would
+      // hand the model a page of mojibake that looks like real content.
+      if (buffer.subarray(0, 8000).includes(0)) {
+        throw new Error(
+          `"${filePath}" looks like a binary file (${info.size} bytes), not text`,
+        );
+      }
+
+      const lines = buffer.toString("utf8").split("\n");
+      const start = Math.max(1, Math.floor(offset)) - 1;
+      if (start >= lines.length && lines.length > 0) {
+        throw new Error(
+          `offset ${offset} is past the end of ${filePath} (${lines.length} lines)`,
+        );
+      }
+
+      let text = lines.slice(start, start + MAX_READ_LINES).join("\n");
+      let clipped = start + MAX_READ_LINES < lines.length;
+      if (text.length > MAX_READ_BYTES) {
+        text = text.slice(0, MAX_READ_BYTES);
+        clipped = true;
+      }
+      if (!clipped && start === 0) return text;
+
+      const shown = `${start + 1}-${Math.min(start + MAX_READ_LINES, lines.length)}`;
+      return (
+        `${text}\n\n[showing lines ${shown} of ${lines.length}. ` +
+        `Read again with a larger offset, or use grep_files to jump to what you need.]`
+      );
     } catch (error) {
       return rethrow(error);
     }

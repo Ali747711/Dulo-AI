@@ -36,6 +36,8 @@ export const CATEGORY_BY_NAME: Record<string, ToolCategory> = {
   read_file: "files",
   write_file: "files",
   glob: "files",
+  edit_file: "files",
+  grep_files: "files",
   shell: "system",
   get_system_info: "system",
   get_env: "system",
@@ -61,7 +63,7 @@ const objectSchema = (
 
 /**
  * Last-known tool list, used until the harness answers GET /api/tools.
- * Mirrors src/tools.ts and src/fileTools.ts in the harness.
+ * Mirrors src/tools/*.ts in the harness.
  */
 export const DEFAULT_TOOLS: ToolDef[] = [
   {
@@ -73,10 +75,14 @@ export const DEFAULT_TOOLS: ToolDef[] = [
   },
   {
     name: "read_file",
-    description: "Read the full text content of a file in the project.",
+    description:
+      "Read a file's text content, capped at 2000 lines. Use offset to read further.",
     category: "files",
     enabled: true,
-    parameters: objectSchema({ path: { type: "string" } }, ["path"]),
+    parameters: objectSchema(
+      { path: { type: "string" }, offset: { type: "number", default: 1 } },
+      ["path"]
+    ),
   },
   {
     name: "write_file",
@@ -94,6 +100,39 @@ export const DEFAULT_TOOLS: ToolDef[] = [
     category: "files",
     enabled: true,
     parameters: objectSchema({ pattern: { type: "string" } }, ["pattern"]),
+  },
+  {
+    name: "edit_file",
+    description:
+      "Replace an exact snippet of text in a file. Fails if the snippet is missing or ambiguous.",
+    category: "files",
+    enabled: true,
+    parameters: objectSchema(
+      {
+        path: { type: "string" },
+        oldString: { type: "string" },
+        newString: { type: "string" },
+        replaceAll: { type: "boolean", default: false },
+      },
+      ["path", "oldString", "newString"]
+    ),
+  },
+  {
+    name: "grep_files",
+    description:
+      "Search file contents for a regular expression. Returns file, line number and text.",
+    category: "files",
+    enabled: true,
+    parameters: objectSchema(
+      {
+        pattern: { type: "string" },
+        dir: { type: "string" },
+        include: { type: "string" },
+        ignoreCase: { type: "boolean", default: false },
+        maxResults: { type: "number", default: 200 },
+      },
+      ["pattern"]
+    ),
   },
   {
     name: "shell",
@@ -167,7 +206,8 @@ export const DEFAULT_TOOLS: ToolDef[] = [
   },
   {
     name: "generate_password",
-    description: "Generate a cryptographically secure random password with configurable options.",
+    description:
+      "Generate a cryptographically secure random password with configurable options.",
     category: "utility",
     enabled: true,
     parameters: objectSchema({
@@ -195,7 +235,8 @@ export const DEFAULT_TOOLS: ToolDef[] = [
   },
   {
     name: "file_extract",
-    description: "Extract a gzip or deflate compressed file within project root.",
+    description:
+      "Extract a gzip or deflate compressed file within project root.",
     category: "files",
     enabled: true,
     parameters: objectSchema(
@@ -209,20 +250,25 @@ export const DEFAULT_TOOLS: ToolDef[] = [
   },
   {
     name: "dns_lookup",
-    description: "Perform DNS lookups for a domain (A, AAAA, MX, NS, TXT, SRV, CNAME, ANY).",
+    description:
+      "Perform DNS lookups for a domain (A, AAAA, MX, NS, TXT, SRV, CNAME, ANY).",
     category: "network",
     enabled: true,
     parameters: objectSchema(
       {
         hostname: { type: "string" },
-        recordType: { type: "string", enum: ["A", "AAAA", "MX", "NS", "TXT", "SRV", "CNAME", "ANY"] },
+        recordType: {
+          type: "string",
+          enum: ["A", "AAAA", "MX", "NS", "TXT", "SRV", "CNAME", "ANY"],
+        },
       },
       ["hostname"]
     ),
   },
   {
     name: "ping",
-    description: "Check if a host is reachable via TCP connection (port 80 or 443).",
+    description:
+      "Check if a host is reachable via TCP connection (port 80 or 443).",
     category: "network",
     enabled: true,
     parameters: objectSchema(

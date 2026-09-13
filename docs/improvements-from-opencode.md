@@ -53,7 +53,9 @@ summary of what was done and what remains.
 *Fix:* one extra `callLLM` with `tools: []` and that prompt appended; return its text as the final
 answer. Touches only the tail of the existing loop.
 
-## Step 2 — Tools a coding agent actually needs (half a day, all small)
+## Step 2 — Tools a coding agent actually needs (half a day, all small) — ✅ DONE 2026-09-13
+
+*`src/tools/edit.ts`, `src/tools/grep.ts`, and capped `read_file` in `src/tools/file.ts`.*
 
 **2.1 `edit_file`** — `write_file` overwrites whole files, so changing one line in a 500-line file
 means re-emitting the file and hoping nothing is dropped. opencode's `tool/edit.ts` does exact
@@ -194,6 +196,5 @@ ruleset — that matters once there are multiple agent profiles with different t
 ## Progress
 
 - **Step 1 — done** (2026-09-13).
-- **Next: step 2.** Three small, independent tools (`edit_file`, `grep_files`, capped
-  `read_file`). It is the cheapest step remaining and the one that most changes what the agent
-  can actually do, now that step 1 made the shell's failures readable.
+- **Step 2 — done** (2026-09-13).
+- **Next: step 3** — streaming and resilience in `src/llm.ts`.
