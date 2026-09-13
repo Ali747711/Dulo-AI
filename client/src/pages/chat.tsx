@@ -25,11 +25,14 @@ import {
   deleteSession,
   getSession,
   listSessions,
+  removeQueuedMessage,
   renameSession,
   replySessionPermission,
   sendMessage,
+  sendQueuedMessage,
   streamSession,
 } from "@/lib/session-client"
+import type { QueuedMessage } from "@/lib/session-types"
 import { useSessionStore } from "@/lib/session-store"
 import { useStore } from "@/lib/store"
 import { pathToHead } from "@/lib/tree"
@@ -183,6 +186,47 @@ export function ChatPage() {
     }
   }
 
+  const queuedText = (message: QueuedMessage): string =>
+    message.parts
+      .filter(
+        (p): p is Extract<typeof p, { type: "text" }> => p.type === "text"
+      )
+      .map((p) => p.text)
+      .join(" ")
+
+  const sendQueuedNow = async (msgId: string) => {
+    if (!selectedId) return
+    try {
+      const outcome = await sendQueuedMessage(base, selectedId, msgId)
+      if (!outcome.sent)
+        toast.error(
+          "A turn is running — it will send automatically once it finishes"
+        )
+    } catch (error) {
+      toast.error(describe(error))
+    }
+  }
+
+  // Edit takes the item out of the queue and reloads its text into the
+  // draft, rather than patching it in place — this reuses the normal
+  // compose-and-send pipeline instead of a second "editing a queued item"
+  // mode, at the cost of losing any parentId/model/agent override the item
+  // had (a plain re-send from the composer never sets those).
+  const editQueued = (message: QueuedMessage) => {
+    if (!selectedId) return
+    setDraft(queuedText(message))
+    void removeQueuedMessage(base, selectedId, message.id).catch((error) =>
+      toast.error(describe(error))
+    )
+  }
+
+  const removeQueued = (msgId: string) => {
+    if (!selectedId) return
+    void removeQueuedMessage(base, selectedId, msgId).catch((error) =>
+      toast.error(describe(error))
+    )
+  }
+
   const stop = async () => {
     if (!selectedId) return
     if (!(await cancelSession(base, selectedId))) toast.error("Nothing to stop")
@@ -291,6 +335,10 @@ export function ChatPage() {
           onStop={() => void stop()}
           running={Boolean(running)}
           disabledReason={disabledReason}
+          queue={selected?.session.queue ?? []}
+          onSendNow={(id) => void sendQueuedNow(id)}
+          onEdit={editQueued}
+          onRemove={removeQueued}
         />
       </section>
     </div>
