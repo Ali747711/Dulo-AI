@@ -10,7 +10,9 @@ import { toast } from "sonner"
 
 import { useHealth } from "@/components/health-provider"
 import { CodeBlock } from "@/components/code-block"
+import { PermissionPrompt } from "@/components/permission-prompt"
 import { RunStatusBadge } from "@/components/run-status-badge"
+import { TodoList } from "@/components/todo-list"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -45,12 +47,7 @@ import {
 } from "@/lib/agent-client"
 import { formatDuration, formatJson, shortModel } from "@/lib/format"
 import { useStore } from "@/lib/store"
-import type {
-  PendingPermission,
-  Run,
-  RunStep,
-  ToolCallRecord,
-} from "@/lib/types"
+import type { Run, RunStep, ToolCallRecord } from "@/lib/types"
 
 const SUGGESTIONS = [
   "What time is it and what is 15 * 8?",
@@ -58,76 +55,6 @@ const SUGGESTIONS = [
   "What's the weather in Seoul?",
   "Show me system info",
 ]
-
-/** manage_todos returns a checklist; showing it as one beats raw JSON. */
-function TodoList({ text }: { text: string }) {
-  const [summary, ...items] = text.split("\n")
-  return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <span className="text-xs text-muted-foreground">{summary}</span>
-      <ul className="flex min-w-0 flex-col gap-1">
-        {items.map((line, i) => {
-          const done = line.startsWith("[x]")
-          const active = line.startsWith("[~]")
-          return (
-            <li
-              key={i}
-              className={
-                "flex min-w-0 items-start gap-2 text-sm " +
-                (done ? "text-muted-foreground line-through" : "")
-              }
-            >
-              <span aria-hidden className="font-mono text-xs leading-5">
-                {done ? "✓" : active ? "▸" : "○"}
-              </span>
-              <span className="min-w-0 break-words">{line.slice(4)}</span>
-            </li>
-          )
-        })}
-      </ul>
-    </div>
-  )
-}
-
-/** A gated tool is paused until the user answers. */
-function PermissionPrompt({
-  permission,
-  onDecide,
-}: {
-  permission: PendingPermission
-  onDecide: (decision: "allow" | "deny" | "always") => void
-}) {
-  return (
-    <Alert>
-      <AlertTitle className="flex min-w-0 flex-wrap items-center gap-2">
-        <Badge variant="outline">{permission.tool}</Badge>
-        wants to run
-      </AlertTitle>
-      <AlertDescription className="flex min-w-0 flex-col gap-3">
-        <CodeBlock>{formatJson(permission.args)}</CodeBlock>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => onDecide("allow")}>
-            Allow once
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onDecide("always")}
-          >
-            Always in this run
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => onDecide("deny")}
-          >
-            Deny
-          </Button>
-        </div>
-      </AlertDescription>
-    </Alert>
-  )
-}
 
 function ToolCallRow({ call }: { call: ToolCallRecord }) {
   return (
@@ -384,17 +311,21 @@ export function PlaygroundPage() {
   const decide = (id: string, decision: "allow" | "deny" | "always") => {
     const serverId = activeRun?.serverId
     if (!serverId) return
-    void replyPermission(state.settings.apiBaseUrl, serverId, id, decision).then(
-      (ok) => {
-        if (!ok) toast.error("The harness did not accept that decision")
-      }
-    )
+    void replyPermission(
+      state.settings.apiBaseUrl,
+      serverId,
+      id,
+      decision
+    ).then((ok) => {
+      if (!ok) toast.error("The harness did not accept that decision")
+    })
   }
 
   // A merged run has no steps until its log is replayed from the harness.
   const select = (run: Run) => {
     setActiveRunId(run.id)
-    if (run.steps.length > 0 || !run.serverId || run.status === "running") return
+    if (run.steps.length > 0 || !run.serverId || run.status === "running")
+      return
     void replayRun(state.settings.apiBaseUrl, run.serverId, (event) =>
       dispatch({ type: "runs/event", id: run.id, event })
     ).catch(() => {
