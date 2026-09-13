@@ -7,7 +7,12 @@ import {
   type LoadedSession,
   type State,
 } from "./session-store"
-import type { ChatMessage, Session, SessionEvent, SessionSnapshot } from "./session-types"
+import type {
+  ChatMessage,
+  Session,
+  SessionEvent,
+  SessionSnapshot,
+} from "./session-types"
 
 const session = (over: Partial<Session> = {}): Session => ({
   id: "s1",
@@ -40,22 +45,39 @@ const loaded = (over: Partial<LoadedSession> = {}): LoadedSession => ({
   ...over,
 })
 
-const ev = <T extends SessionEvent["type"]>(
+// A plain `Omit<SessionEvent, K>` collapses the union to its shared keys only
+// (keyof of a union is the intersection of each member's keys), which is why
+// the naive version of this helper let TypeScript accept `ev(1, { type:
+// "run.start", ... })` with no per-variant checking at all — a real gap only
+// `tsc -b` (the build script) catches, not `tsc --noEmit` at the repo root
+// (which compiles zero files here; see context.md) or vitest (no type-check).
+// Distributing over a bare type parameter keeps each union member intact.
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, K>
+  : never
+
+const ev = (
   seq: number,
-  body: Extract<SessionEvent, { type: T }> extends infer E
-    ? Omit<E, "sessionId" | "seq">
-    : never
+  body: DistributiveOmit<SessionEvent, "sessionId" | "seq">
 ): SessionEvent => ({ ...body, sessionId: "s1", seq }) as SessionEvent
 
 describe("foldSessionEvent", () => {
   it("tracks the highest seq seen", () => {
-    const next = foldSessionEvent(loaded(), ev(7, { type: "step.start", step: 1 }))
+    const next = foldSessionEvent(
+      loaded(),
+      ev(7, { type: "step.start", step: 1 })
+    )
     expect(next.lastSeq).toBe(7)
-    expect(foldSessionEvent(next, ev(3, { type: "step.start", step: 2 })).lastSeq).toBe(7)
+    expect(
+      foldSessionEvent(next, ev(3, { type: "step.start", step: 2 })).lastSeq
+    ).toBe(7)
   })
 
   it("appends a created user message and moves head to it", () => {
-    const next = foldSessionEvent(loaded(), ev(1, { type: "message.created", message: user }))
+    const next = foldSessionEvent(
+      loaded(),
+      ev(1, { type: "message.created", message: user })
+    )
     expect(next.messages).toEqual([user])
     expect(next.session.headId).toBe("u1")
   })
@@ -69,7 +91,6 @@ describe("foldSessionEvent", () => {
         query: "hi",
         model: "m",
         startedAt: "2026-01-01T00:00:02Z",
-        sessionId: "s1",
         turnId: "t1",
         userMessageId: "u1",
         assistantMessageId: "a1",
@@ -89,24 +110,50 @@ describe("foldSessionEvent", () => {
     let state = foldSessionEvent(
       loaded({ messages: [user] }),
       ev(2, {
-        type: "run.start", runId: "t1", query: "hi", model: "m",
-        startedAt: "x", turnId: "t1", userMessageId: "u1", assistantMessageId: "a1",
+        type: "run.start",
+        runId: "t1",
+        query: "hi",
+        model: "m",
+        startedAt: "x",
+        turnId: "t1",
+        userMessageId: "u1",
+        assistantMessageId: "a1",
       })
     )
-    state = foldSessionEvent(state, ev(3, { type: "assistant.delta", step: 1, text: "He" }))
-    state = foldSessionEvent(state, ev(4, { type: "assistant.delta", step: 1, text: "llo" }))
-    expect(state.liveTurn?.assistant.parts).toEqual([{ type: "text", text: "Hello" }])
+    state = foldSessionEvent(
+      state,
+      ev(3, { type: "assistant.delta", step: 1, text: "He" })
+    )
+    state = foldSessionEvent(
+      state,
+      ev(4, { type: "assistant.delta", step: 1, text: "llo" })
+    )
+    expect(state.liveTurn?.assistant.parts).toEqual([
+      { type: "text", text: "Hello" },
+    ])
   })
 
   it("keeps pending permissions until they resolve", () => {
     let state = foldSessionEvent(
       loaded(),
-      ev(5, { type: "permission.ask", step: 1, id: "p1", tool: "shell", args: { command: "ls" } })
+      ev(5, {
+        type: "permission.ask",
+        step: 1,
+        id: "p1",
+        tool: "shell",
+        args: { command: "ls" },
+      })
     )
     expect(state.permissions).toHaveLength(1)
     state = foldSessionEvent(
       state,
-      ev(6, { type: "permission.resolved", step: 1, id: "p1", tool: "shell", decision: "allow" })
+      ev(6, {
+        type: "permission.resolved",
+        step: 1,
+        id: "p1",
+        tool: "shell",
+        decision: "allow",
+      })
     )
     expect(state.permissions).toEqual([])
   })
@@ -114,14 +161,26 @@ describe("foldSessionEvent", () => {
   it("records a failure on run.end and clears it on the next run.start", () => {
     let state = foldSessionEvent(
       loaded(),
-      ev(8, { type: "run.end", status: "failed", error: "boom", durationMs: 1, steps: 1 })
+      ev(8, {
+        type: "run.end",
+        status: "failed",
+        error: "boom",
+        durationMs: 1,
+        steps: 1,
+      })
     )
     expect(state.lastError).toBe("boom")
     state = foldSessionEvent(
       state,
       ev(9, {
-        type: "run.start", runId: "t2", query: "again", model: "m",
-        startedAt: "x", turnId: "t2", userMessageId: "u2", assistantMessageId: "a2",
+        type: "run.start",
+        runId: "t2",
+        query: "again",
+        model: "m",
+        startedAt: "x",
+        turnId: "t2",
+        userMessageId: "u2",
+        assistantMessageId: "a2",
       })
     )
     expect(state.lastError).toBeUndefined()
@@ -129,28 +188,50 @@ describe("foldSessionEvent", () => {
 
   it("replaces the live fold with the completed message and clears the live turn", () => {
     const completed: ChatMessage = {
-      id: "a1", sessionId: "s1", parentId: "u1", role: "assistant", turnId: "t1",
-      parts: [{ type: "text", text: "Hello, world" }], createdAt: "x",
+      id: "a1",
+      sessionId: "s1",
+      parentId: "u1",
+      role: "assistant",
+      turnId: "t1",
+      parts: [{ type: "text", text: "Hello, world" }],
+      createdAt: "x",
     }
     let state = foldSessionEvent(
       loaded({ messages: [user] }),
       ev(2, {
-        type: "run.start", runId: "t1", query: "hi", model: "m",
-        startedAt: "x", turnId: "t1", userMessageId: "u1", assistantMessageId: "a1",
+        type: "run.start",
+        runId: "t1",
+        query: "hi",
+        model: "m",
+        startedAt: "x",
+        turnId: "t1",
+        userMessageId: "u1",
+        assistantMessageId: "a1",
       })
     )
-    state = foldSessionEvent(state, ev(3, { type: "assistant.delta", step: 1, text: "Hel" }))
-    state = foldSessionEvent(state, ev(4, { type: "message.completed", message: completed }))
+    state = foldSessionEvent(
+      state,
+      ev(3, { type: "assistant.delta", step: 1, text: "Hel" })
+    )
+    state = foldSessionEvent(
+      state,
+      ev(4, { type: "message.completed", message: completed })
+    )
     expect(state.liveTurn).toBeUndefined()
     expect(state.messages.map((m) => m.id)).toEqual(["u1", "a1"])
-    expect(state.messages[1].parts).toEqual([{ type: "text", text: "Hello, world" }])
+    expect(state.messages[1].parts).toEqual([
+      { type: "text", text: "Hello, world" },
+    ])
     expect(state.session.headId).toBe("a1")
   })
 
   it("applies session.updated patches", () => {
     const state = foldSessionEvent(
       loaded(),
-      ev(10, { type: "session.updated", patch: { title: "Renamed", status: "idle" } })
+      ev(10, {
+        type: "session.updated",
+        patch: { title: "Renamed", status: "idle" },
+      })
     )
     expect(state.session.title).toBe("Renamed")
   })
@@ -165,7 +246,14 @@ describe("loadedFromSnapshot", () => {
       seq: 12,
       liveTurn: {
         turnId: "t1",
-        assistant: { id: "a1", sessionId: "s1", parentId: "u1", role: "assistant", parts: [], createdAt: "x" },
+        assistant: {
+          id: "a1",
+          sessionId: "s1",
+          parentId: "u1",
+          role: "assistant",
+          parts: [],
+          createdAt: "x",
+        },
         pendingPermissions: [{ id: "p1", step: 1, tool: "shell", args: {} }],
       },
     }
@@ -181,8 +269,15 @@ describe("loadedFromSnapshot", () => {
       messages: [],
       turns: [
         {
-          id: "t1", sessionId: "s1", userMessageId: "u1", assistantMessageId: "a1",
-          model: "m", status: "failed", error: "quota", startedAt: "x", durationMs: 1,
+          id: "t1",
+          sessionId: "s1",
+          userMessageId: "u1",
+          assistantMessageId: "a1",
+          model: "m",
+          status: "failed",
+          error: "quota",
+          startedAt: "x",
+          durationMs: 1,
         },
       ],
       seq: 3,
@@ -194,7 +289,14 @@ describe("loadedFromSnapshot", () => {
 describe("reducer", () => {
   const base: State = {
     summaries: [
-      { id: "s1", title: "A", createdAt: "x", updatedAt: "x", status: "idle", messageCount: 0 },
+      {
+        id: "s1",
+        title: "A",
+        createdAt: "x",
+        updatedAt: "x",
+        status: "idle",
+        messageCount: 0,
+      },
     ],
     loaded: { s1: loaded() },
     selectedId: "s1",
