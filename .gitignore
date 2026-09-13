@@ -34,3 +34,6 @@ context.md
 
 # Per-run event logs written by src/runs.ts
 runs/
+
+# Per-session data written by src/session/store/files.ts
+sessions/
