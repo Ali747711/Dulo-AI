@@ -62,8 +62,8 @@ export interface QueuedMessage extends TurnSettings {
   /** Becomes the ChatMessage id when the message is sent. */
   id: string;
   parts: Part[];
-  /** Omitted means "head at send time". */
-  parentId?: string;
+  /** undefined = head at send time; null = force a new root (matches TurnInput). */
+  parentId?: string | null;
   queuedAt: string;
 }
 

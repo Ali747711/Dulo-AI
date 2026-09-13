@@ -216,6 +216,31 @@ describe("runner", () => {
     }
   });
 
+  it("preserves an explicit new-root parentId when queuing, unlike 'head at send time'", async () => {
+    const slow = await startStubLlm(() => ({ text: "slow", delayMs: 300 }));
+    useStubLlm(slow);
+    try {
+      const session = await runner.createSession();
+      const first = await runner.startTurn(session.id, { parts: text("v1") });
+      assert.ok(first && first.started);
+
+      // Edit-and-resend of the very first message, queued because "v1" is still running.
+      const b = await runner.startTurn(session.id, { parts: text("v2"), parentId: null });
+      assert.ok(b && !b.started && b.reason === "queued");
+      assert.equal(b.queued.parentId, null);
+
+      await runner.awaitIdle(session.id); // lets both turns finish, including the auto-continue
+
+      const snap = await runner.getSnapshot(session.id);
+      const roots = snap!.messages.filter((m) => m.parentId === null);
+      // v2 must be its own root, NOT a child of v1's answer (the head at dequeue time).
+      assert.equal(roots.length, 2);
+    } finally {
+      await slow.close();
+      useStubLlm(stub);
+    }
+  });
+
   it("cancel ends the turn, fills dangling tool results and keeps the session usable", async () => {
     const slow = await startStubLlm((_req, i) =>
       i === 0

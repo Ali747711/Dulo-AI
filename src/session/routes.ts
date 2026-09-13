@@ -62,7 +62,7 @@ const PermissionReply = z.object({ decision: z.enum(["allow", "deny", "always"])
 const PatchQueueItem = z
   .object({
     parts: z.array(UserPart).min(1).max(50).optional(),
-    parentId: z.string().min(1).max(64).optional(),
+    parentId: z.string().min(1).max(64).nullable().optional(),
     model: Settings.model,
     agent: Settings.agent,
   })

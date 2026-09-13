@@ -503,7 +503,7 @@ export const createRunner = (store: SessionStore): Runner => {
         const queued: QueuedMessage = {
           id: input.messageId ?? randomUUID(),
           parts: input.parts,
-          ...(input.parentId ? { parentId: input.parentId } : {}),
+          ...(input.parentId !== undefined ? { parentId: input.parentId } : {}),
           ...(input.model ? { model: input.model } : {}),
           ...(input.agent ? { agent: input.agent } : {}),
           ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
