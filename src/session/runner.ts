@@ -53,7 +53,17 @@ export interface Snapshot {
   turns: Turn[];
   /** Current seq at snapshot time; subscribe with `after=seq`. */
   seq: number;
-  liveTurn?: { turnId: string; assistant: ChatMessage };
+  liveTurn?: {
+    turnId: string;
+    assistant: ChatMessage;
+    /** Gated tool calls waiting on a human right now. Empty when none. */
+    pendingPermissions: {
+      id: string;
+      step: number;
+      tool: string;
+      args: Record<string, unknown>;
+    }[];
+  };
 }
 
 interface Subscriber {
@@ -286,13 +296,26 @@ export const createRunner = (store: SessionStore): Runner => {
     async getSnapshot(id) {
       const entry = await load(id);
       if (!entry) return null;
+      // A local binding keeps the narrowing inside the map callback.
+      const live = entry.turn;
       return {
         session: entry.session,
         messages: entry.messages,
         turns: entry.turns,
         seq: entry.seq,
-        ...(entry.turn
-          ? { liveTurn: { turnId: entry.turn.turn.id, assistant: entry.turn.assistant } }
+        ...(live
+          ? {
+              liveTurn: {
+                turnId: live.turn.id,
+                assistant: live.assistant,
+                pendingPermissions: live.gate.pending().map((ask) => ({
+                  id: ask.id,
+                  step: live.step,
+                  tool: ask.tool,
+                  args: ask.args,
+                })),
+              },
+            }
           : {}),
       };
     },

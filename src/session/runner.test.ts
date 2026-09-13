@@ -214,4 +214,38 @@ describe("runner", () => {
       useStubLlm(stub);
     }
   });
+
+  it("reports pending permissions in the snapshot while a gated tool waits", async () => {
+    // "shell" is in DEFAULT_GATED_TOOLS, so the loop parks on the gate.
+    const gated = await startStubLlm((_req, i) =>
+      i === 0
+        ? { toolCall: { name: "shell", args: { command: "echo hi" } } }
+        : { text: "done" },
+    );
+    useStubLlm(gated);
+    try {
+      const session = await runner.createSession();
+      const r = await runner.startTurn(session.id, { parts: text("run it") });
+      assert.ok(r && r.started);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const waiting = await runner.getSnapshot(session.id);
+      assert.equal(waiting?.liveTurn?.pendingPermissions.length, 1);
+      assert.equal(waiting?.liveTurn?.pendingPermissions[0].tool, "shell");
+      assert.equal(waiting?.liveTurn?.pendingPermissions[0].step, 1);
+
+      const requestId = waiting!.liveTurn!.pendingPermissions[0].id;
+      assert.equal(runner.resolvePermission(session.id, requestId, "deny"), true);
+      await runner.awaitIdle(session.id);
+
+      const done = await runner.getSnapshot(session.id);
+      assert.equal(done?.liveTurn, undefined);
+      const assistant = done!.messages.find((m) => m.id === r.assistantMessageId)!;
+      const denied = assistant.parts.find((p) => p.type === "tool_result");
+      assert.ok(denied && denied.type === "tool_result" && denied.isError);
+    } finally {
+      await gated.close();
+      useStubLlm(stub);
+    }
+  });
 });
