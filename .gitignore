@@ -29,3 +29,8 @@ pnpm-debug.log*
 .agents/
 .playwright-mcp/
 skills-lock.json
+CLAUDE.md
+context.md
+
+# Per-run event logs written by src/runs.ts
+runs/

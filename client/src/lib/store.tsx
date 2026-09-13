@@ -21,6 +21,7 @@ type Action =
   | { type: "runs/add"; run: Run }
   | { type: "runs/update"; id: string; patch: Partial<Run> }
   | { type: "runs/event"; id: string; event: RunEvent }
+  | { type: "runs/merge"; runs: Run[] }
   | { type: "runs/clear" }
 
 interface Persisted {
@@ -42,11 +43,26 @@ const updateStep = (
   }
 }
 
+/**
+ * Apply an event and remember its sequence number. Events carry `seq` so a
+ * dropped connection can be resumed from the last one this client saw.
+ */
+const foldEvent = (run: Run, event: RunEvent): Run => {
+  const next = applyEvent(run, event)
+  const { seq } = event as { seq?: number }
+  return typeof seq === "number" ? { ...next, lastSeq: seq } : next
+}
+
 /** Fold one server-sent event into a run. Pure, returns a new run. */
 const applyEvent = (run: Run, event: RunEvent): Run => {
   switch (event.type) {
     case "run.start":
-      return { ...run, model: event.model, startedAt: event.startedAt }
+      return {
+        ...run,
+        serverId: event.runId,
+        model: event.model,
+        startedAt: event.startedAt,
+      }
     case "step.start":
       return updateStep(run, event.step, (s) => s)
     case "tool.call":
@@ -138,11 +154,26 @@ const reducer = (state: State, action: Action): State => {
           run.id === action.id ? { ...run, ...action.patch } : run
         ),
       }
+    case "runs/merge": {
+      // Runs the harness knows about but this browser does not. They arrive as
+      // summaries with no steps; selecting one replays its log from the server.
+      const known = new Set(
+        state.runs.flatMap((r) => [r.id, r.serverId].filter(Boolean) as string[])
+      )
+      const extra = action.runs.filter((r) => !known.has(r.id))
+      if (extra.length === 0) return state
+      return {
+        ...state,
+        runs: [...state.runs, ...extra].sort((a, b) =>
+          b.startedAt.localeCompare(a.startedAt)
+        ),
+      }
+    }
     case "runs/event":
       return {
         ...state,
         runs: state.runs.map((run) =>
-          run.id === action.id ? applyEvent(run, action.event) : run
+          run.id === action.id ? foldEvent(run, action.event) : run
         ),
       }
     case "runs/clear":

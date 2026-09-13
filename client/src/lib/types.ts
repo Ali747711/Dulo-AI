@@ -55,6 +55,10 @@ export interface RunUsage {
 
 export interface Run {
   id: string
+  /** Id the harness gave this run, from run.start. Needed to reattach or cancel. */
+  serverId?: string
+  /** Highest event seq seen, so a reconnect can resume from it. */
+  lastSeq?: number
   query: string
   model: string
   status: RunStatus

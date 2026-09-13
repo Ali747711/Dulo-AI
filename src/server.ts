@@ -2,13 +2,22 @@
 // HTTP API for the Dulo web client. Runs stream back as Server-Sent Events.
 import "dotenv/config";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { runAgent } from "./agent.js";
 import { FALLBACK_MODELS, MODEL } from "./llm.js";
-import { tools } from "./tools.js";
-import type { RunEvent } from "./events.js";
+import { tools } from "./tools/index.js";
+import {
+  cancelRun,
+  createRun,
+  ensureRunsDir,
+  finish,
+  getRun,
+  listRuns,
+  publish,
+  readRunLog,
+  subscribe,
+} from "./runs.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const CLIENT_ORIGIN = process.env.DULO_CLIENT_ORIGIN ?? "http://localhost:5173";
@@ -55,6 +64,23 @@ const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
     req.on("error", reject);
   });
 
+const openSseStream = (res: ServerResponse): void => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    ...corsHeaders,
+  });
+};
+
+/** Keeps proxies and browsers from treating a quiet stream as dead. */
+const startHeartbeat = (res: ServerResponse): void => {
+  const timer = setInterval(() => {
+    if (!res.writableEnded && !res.destroyed) res.write(": ping\n\n");
+  }, SSE_HEARTBEAT_MS);
+  res.on("close", () => clearInterval(timer));
+};
+
 const handleRun = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
   let body: unknown;
   try {
@@ -73,40 +99,15 @@ const handleRun = async (req: IncomingMessage, res: ServerResponse): Promise<voi
     ? tools.filter((t) => enabledTools.includes(t.name))
     : tools;
 
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    ...corsHeaders,
-  });
-  // Writing to a closed connection would emit an unhandled stream error,
-  // so every write is skipped once the client has gone away.
-  const write = (chunk: string) => {
-    if (!res.writableEnded && !res.destroyed) res.write(chunk);
-  };
-  const send = (event: RunEvent) => {
-    write(`data: ${JSON.stringify(event)}\n\n`);
-  };
-  const heartbeat = setInterval(() => write(": ping\n\n"), SSE_HEARTBEAT_MS);
+  const handle = createRun({ query, model: model ?? MODEL });
+  const short = handle.id.slice(0, 8);
+  console.log(`[run ${short}] ${query}`);
 
-  // Closing the browser tab or pressing Stop cancels the run.
-  // The request stream is already consumed by this point, so the response
-  // is what signals that the client went away.
-  const controller = new AbortController();
-  const cancel = () => controller.abort();
-  res.on("close", cancel);
-  req.on("aborted", cancel);
-
-  const runId = randomUUID();
-  const usedModel = model ?? MODEL;
-  send({
-    type: "run.start",
-    runId,
-    query,
-    model: usedModel,
-    startedAt: new Date().toISOString(),
-  });
-  console.log(`[run ${runId.slice(0, 8)}] ${query}`);
+  openSseStream(res);
+  startHeartbeat(res);
+  // The response is only a viewer. Closing it detaches this client; the run
+  // keeps going and can be picked up again via /api/run/:id/stream.
+  subscribe(handle, res);
 
   try {
     const result = await runAgent(query, {
@@ -114,22 +115,53 @@ const handleRun = async (req: IncomingMessage, res: ServerResponse): Promise<voi
       model,
       maxSteps,
       temperature,
-      onEvent: send,
-      signal: controller.signal,
+      onEvent: (event) => publish(handle, event),
+      signal: handle.controller.signal,
     });
-    send({ type: "run.end", ...result });
+    publish(handle, { type: "run.end", ...result });
     const detail = result.error ? `: ${result.error}` : "";
     console.log(
-      `[run ${runId.slice(0, 8)}] ${result.status} in ${result.durationMs}ms${detail}`,
+      `[run ${short}] ${result.status} in ${result.durationMs}ms${detail}`,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    send({ type: "run.end", status: "failed", error: message, durationMs: 0, steps: 0 });
-    console.error(`[run ${runId.slice(0, 8)}] crashed:`, message);
+    publish(handle, {
+      type: "run.end",
+      status: "failed",
+      error: message,
+      durationMs: 0,
+      steps: 0,
+    });
+    console.error(`[run ${short}] crashed:`, message);
   } finally {
-    clearInterval(heartbeat);
-    if (!res.writableEnded) res.end();
+    await finish(handle);
   }
+};
+
+/** Reattach to a run already in progress, or replay one that has finished. */
+const handleReattach = async (
+  res: ServerResponse,
+  id: string,
+  after: number,
+): Promise<void> => {
+  const handle = getRun(id);
+  if (handle) {
+    openSseStream(res);
+    startHeartbeat(res);
+    subscribe(handle, res, after);
+    return;
+  }
+
+  const events = await readRunLog(id);
+  if (!events) {
+    json(res, 404, { error: `no run ${id}` });
+    return;
+  }
+  openSseStream(res);
+  for (const event of events) {
+    if (event.seq > after) res.write(`data: ${JSON.stringify(event)}\n\n`);
+  }
+  res.end();
 };
 
 const server = createServer((req, res) => {
@@ -163,8 +195,32 @@ const server = createServer((req, res) => {
     void handleRun(req, res);
     return;
   }
+  if (req.method === "GET" && url.pathname === "/api/runs") {
+    void listRuns().then((runs) => json(res, 200, runs));
+    return;
+  }
+
+  const streamMatch = url.pathname.match(/^\/api\/run\/([\w-]{1,64})\/stream$/);
+  if (req.method === "GET" && streamMatch) {
+    const after = Number(url.searchParams.get("after") ?? 0);
+    void handleReattach(res, streamMatch[1], Number.isFinite(after) ? after : 0);
+    return;
+  }
+
+  const cancelMatch = url.pathname.match(/^\/api\/run\/([\w-]{1,64})\/cancel$/);
+  if (req.method === "POST" && cancelMatch) {
+    const cancelled = cancelRun(cancelMatch[1]);
+    json(res, cancelled ? 200 : 409, {
+      cancelled,
+      ...(cancelled ? {} : { error: "run is not running" }),
+    });
+    return;
+  }
+
   json(res, 404, { error: "not found" });
 });
+
+void ensureRunsDir();
 
 server.listen(PORT, () => {
   console.log(`Dulo harness API listening on http://localhost:${PORT}`);

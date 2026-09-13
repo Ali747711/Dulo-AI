@@ -104,7 +104,9 @@ call and Dulo ignores it. Return it from `callLLM`, sum across steps, add the to
 `RunResult` and the `run.end` event. With streaming on, add
 `stream_options: {include_usage: true}`.
 
-## Step 4 — A run should outlive its HTTP connection (about a day)
+## Step 4 — A run should outlive its HTTP connection (about a day) — ✅ DONE 2026-09-13
+
+*`src/runs.ts` holds the registry and the log; the server is now a viewer onto it.*
 
 **4.1 Decouple the run.** `res.on("close")` currently aborts the controller, so a refresh or a
 wifi blip kills the run. Add `runs = new Map<string, RunHandle>()` where a handle holds
@@ -201,4 +203,5 @@ ruleset — that matters once there are multiple agent profiles with different t
 - **Step 1 — done** (2026-09-13).
 - **Step 2 — done** (2026-09-13).
 - **Step 3 — done** (2026-09-13).
-- **Next: step 4** — runs that outlive their HTTP connection.
+- **Step 4 — done** (2026-09-13).
+- **Next: step 5** — extensibility: tool plugins, config, skills, agents, MCP.

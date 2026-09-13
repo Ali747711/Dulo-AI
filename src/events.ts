@@ -60,6 +60,13 @@ export type RunEvent =
       steps: number;
     };
 
+/**
+ * A RunEvent as it is stored and streamed: the same shape plus a per-run
+ * monotonic sequence number, so a reconnecting client can ask for everything
+ * after the last one it saw.
+ */
+export type StoredEvent = RunEvent & { seq: number };
+
 export interface RunResult {
   status: RunStatus;
   finalAnswer?: string;

@@ -35,7 +35,13 @@ import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
-import { createRun, streamRun } from "@/lib/agent-client"
+import {
+  cancelRun,
+  createRun,
+  fetchRuns,
+  replayRun,
+  streamRun,
+} from "@/lib/agent-client"
 import { formatDuration, formatJson, shortModel } from "@/lib/format"
 import { useStore } from "@/lib/store"
 import type { Run, RunStep, ToolCallRecord } from "@/lib/types"
@@ -232,7 +238,57 @@ export function PlaygroundPage() {
     }
   }
 
-  const stop = () => abortRef.current?.abort()
+  // The harness owns the run now, so Stop asks it to cancel and lets the
+  // resulting run.end event close the stream. Aborting locally is the fallback
+  // for a run that has not reported its server id yet.
+  const stop = async () => {
+    const serverId = activeRun?.serverId
+    const cancelled = serverId
+      ? await cancelRun(state.settings.apiBaseUrl, serverId)
+      : false
+    if (!cancelled) abortRef.current?.abort()
+  }
+
+  // Runs recorded by the harness that this browser has never seen, so history
+  // survives clearing site data or opening the panel from another machine.
+  React.useEffect(() => {
+    if (health.status !== "online") return
+    let cancelledEffect = false
+    void fetchRuns(state.settings.apiBaseUrl)
+      .then((summaries) => {
+        if (cancelledEffect) return
+        dispatch({
+          type: "runs/merge",
+          runs: summaries.map((s) => ({
+            id: s.id,
+            serverId: s.id,
+            query: s.query,
+            model: s.model,
+            status: s.status,
+            startedAt: s.startedAt,
+            durationMs: s.durationMs,
+            steps: [],
+          })),
+        })
+      })
+      .catch(() => {
+        // History is a convenience; a harness without it still works.
+      })
+    return () => {
+      cancelledEffect = true
+    }
+  }, [health.status, state.settings.apiBaseUrl, dispatch])
+
+  // A merged run has no steps until its log is replayed from the harness.
+  const select = (run: Run) => {
+    setActiveRunId(run.id)
+    if (run.steps.length > 0 || !run.serverId || run.status === "running") return
+    void replayRun(state.settings.apiBaseUrl, run.serverId, (event) =>
+      dispatch({ type: "runs/event", id: run.id, event })
+    ).catch(() => {
+      // Leave the summary as-is if the log is gone.
+    })
+  }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -316,7 +372,7 @@ export function PlaygroundPage() {
             <CardTitle>History</CardTitle>
             <CardDescription>
               {state.runs.length} {state.runs.length === 1 ? "run" : "runs"}{" "}
-              saved in this browser
+              known to this browser and the harness
             </CardDescription>
             <CardAction>
               <Button
@@ -343,7 +399,7 @@ export function PlaygroundPage() {
                     key={run.id}
                     variant={run.id === activeRunId ? "secondary" : "ghost"}
                     className="h-auto shrink-0 justify-start py-2 text-left"
-                    onClick={() => setActiveRunId(run.id)}
+                    onClick={() => select(run)}
                   >
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="truncate">{run.query}</span>
@@ -362,7 +418,7 @@ export function PlaygroundPage() {
 
       <div className="min-w-0 xl:col-span-3">
         {activeRun ? (
-          <RunView run={activeRun} onStop={stop} />
+          <RunView run={activeRun} onStop={() => void stop()} />
         ) : (
           <Empty className="h-full min-h-72 border">
             <EmptyHeader>
