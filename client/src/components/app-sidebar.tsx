@@ -1,5 +1,6 @@
 import { HugeiconsIcon } from "@hugeicons/react"
 import {
+  BubbleChatIcon,
   DashboardSquare01Icon,
   PlayIcon,
   Robot01Icon,
@@ -34,6 +35,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { page: "dashboard", label: "Dashboard", icon: DashboardSquare01Icon },
+  { page: "chat", label: "Chat", icon: BubbleChatIcon },
   { page: "playground", label: "Playground", icon: PlayIcon },
   { page: "tools", label: "Tools", icon: ToolsIcon },
   { page: "settings", label: "Settings", icon: Settings01Icon },

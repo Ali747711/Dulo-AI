@@ -28,6 +28,7 @@ import type { Page } from "@/lib/types"
 
 const PAGE_TITLES: Record<Page, string> = {
   dashboard: "Dashboard",
+  chat: "Chat",
   playground: "Playground",
   tools: "Tools",
   settings: "Settings",

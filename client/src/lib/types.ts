@@ -1,4 +1,4 @@
-export type Page = "dashboard" | "playground" | "tools" | "settings"
+export type Page = "dashboard" | "chat" | "playground" | "tools" | "settings"
 
 export type ToolCategory = "files" | "system" | "network" | "utility"
 
