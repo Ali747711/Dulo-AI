@@ -87,11 +87,11 @@ async function validateUrlSecurity(urlString: string): Promise<{ ok: boolean; er
   try {
     parsed = new URL(urlString);
   } catch {
-    return { ok: false, error: "Error: Invalid URL" };
+    return { ok: false, error: "Invalid URL" };
   }
 
   if (!["http:", "https:"].includes(parsed.protocol)) {
-    return { ok: false, error: "Error: Only http:// and https:// URLs are allowed" };
+    return { ok: false, error: "Only http:// and https:// URLs are allowed" };
   }
 
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
@@ -103,13 +103,13 @@ async function validateUrlSecurity(urlString: string): Promise<{ ok: boolean; er
     hostname === "::1" ||
     hostname === "0.0.0.0"
   ) {
-    return { ok: false, error: "Error: Requests to localhost or private network addresses are not allowed" };
+    return { ok: false, error: "Requests to localhost or private network addresses are not allowed" };
   }
 
   // If already an IP address, check directly
   if (net.isIP(hostname)) {
     if (isPrivateIp(hostname)) {
-      return { ok: false, error: "Error: Requests to localhost or private network addresses are not allowed" };
+      return { ok: false, error: "Requests to localhost or private network addresses are not allowed" };
     }
     return { ok: true, parsed };
   }
@@ -118,10 +118,10 @@ async function validateUrlSecurity(urlString: string): Promise<{ ok: boolean; er
   try {
     const { address } = await lookup(hostname);
     if (isPrivateIp(address)) {
-      return { ok: false, error: "Error: Requests to localhost or private network addresses are not allowed" };
+      return { ok: false, error: "Requests to localhost or private network addresses are not allowed" };
     }
   } catch (error: any) {
-    return { ok: false, error: `Error: Cannot resolve hostname "${hostname}" (${error.message})` };
+    return { ok: false, error: `Cannot resolve hostname "${hostname}" (${error.message})` };
   }
 
   return { ok: true, parsed };
@@ -180,10 +180,10 @@ export const httpRequestTool: Tool = {
     body?: string;
     maxChars?: number;
     raw?: boolean;
-  }) => {
+  }, signal?: AbortSignal) => {
     const check = await validateUrlSecurity(url);
     if (!check.ok || !check.parsed) {
-      return check.error || "Error: Access to URL is prohibited";
+      throw new Error(check.error || "Access to URL is prohibited");
     }
 
     const limit = Math.min(Math.max(1, maxChars), HTTP_MAX_CHARS);
@@ -196,7 +196,11 @@ export const httpRequestTool: Tool = {
           body && ["POST", "PUT", "PATCH"].includes(method.toUpperCase())
             ? body
             : undefined,
-        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+        // Cancelling the run aborts the request instead of leaving it in flight
+        // for up to HTTP_TIMEOUT_MS after the client was told the run stopped.
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(HTTP_TIMEOUT_MS)])
+          : AbortSignal.timeout(HTTP_TIMEOUT_MS),
         redirect: "follow",
       });
 
@@ -225,10 +229,13 @@ export const httpRequestTool: Tool = {
       );
     } catch (error) {
       const err = error as { name?: string; message?: string };
-      if (err.name === "TimeoutError" || err.name === "AbortError") {
-        return `Error: Request timed out after ${HTTP_TIMEOUT_MS}ms`;
+      if (signal?.aborted) {
+        throw new Error("Request cancelled");
       }
-      return `Error: ${err.message ?? String(error)}`;
+      if (err.name === "TimeoutError" || err.name === "AbortError") {
+        throw new Error(`Request timed out after ${HTTP_TIMEOUT_MS}ms`);
+      }
+      throw new Error(err.message ?? String(error));
     }
   },
 };
@@ -255,7 +262,7 @@ export const dnsLookupTool: Tool = {
   },
   execute: async ({ hostname, recordType = "A" }: { hostname: string; recordType?: string }) => {
     if (!hostname || hostname.length > 255) {
-      return "Error: Invalid hostname";
+      throw new Error("Invalid hostname");
     }
 
     try {
@@ -290,7 +297,7 @@ export const dnsLookupTool: Tool = {
       }
       return JSON.stringify(results, null, 2);
     } catch (error: any) {
-      return `Error: ${error.message || String(error)}`;
+      throw new Error(error.message || String(error));
     }
   },
 };
@@ -322,17 +329,17 @@ export const pingTool: Tool = {
   },
   execute: async ({ host, port = 80, timeout = 5000 }: { host: string; port?: number; timeout?: number }) => {
     if (!host || host.length > 255) {
-      return "Error: Invalid host";
+      throw new Error("Invalid host");
     }
     if (port < 1 || port > 65535) {
-      return "Error: Port must be between 1 and 65535";
+      throw new Error("Port must be between 1 and 65535");
     }
     if (timeout > 30000) {
-      return "Error: Timeout cannot exceed 30000ms";
+      throw new Error("Timeout cannot exceed 30000ms");
     }
 
     const start = Date.now();
-    return new Promise<string>((resolve) => {
+    return new Promise<string>((resolve, reject) => {
       const socket = new net.Socket();
       socket.setTimeout(timeout);
 
@@ -344,12 +351,16 @@ export const pingTool: Tool = {
 
       socket.on("timeout", () => {
         socket.destroy();
-        resolve(`Error: Connection to ${host}:${port} timed out after ${timeout}ms`);
+        reject(
+          new Error(`Connection to ${host}:${port} timed out after ${timeout}ms`),
+        );
       });
 
       socket.on("error", (err: Error) => {
         const latency = Date.now() - start;
-        resolve(`Error: Cannot reach ${host}:${port} (${err.message}, ${latency}ms)`);
+        reject(
+          new Error(`Cannot reach ${host}:${port} (${err.message}, ${latency}ms)`),
+        );
       });
 
       socket.connect(port, host);
@@ -383,17 +394,17 @@ export const portCheckTool: Tool = {
   },
   execute: async ({ host, port, timeout = 3000 }: { host: string; port: number; timeout?: number }) => {
     if (!host || host.length > 255) {
-      return "Error: Invalid host";
+      throw new Error("Invalid host");
     }
     if (port < 1 || port > 65535) {
-      return "Error: Port must be between 1 and 65535";
+      throw new Error("Port must be between 1 and 65535");
     }
     if (timeout > 30000) {
-      return "Error: Timeout cannot exceed 30000ms";
+      throw new Error("Timeout cannot exceed 30000ms");
     }
 
     const start = Date.now();
-    return new Promise<string>((resolve) => {
+    return new Promise<string>((resolve, reject) => {
       const socket = new net.Socket();
       socket.setTimeout(timeout);
 
@@ -413,11 +424,11 @@ export const portCheckTool: Tool = {
         if (err.message.includes("ECONNREFUSED")) {
           resolve(`Port ${port} on ${host} is CLOSED (connection refused, ${latency}ms)`);
         } else if (err.message.includes("ENOTFOUND") || err.message.includes("EAI_AGAIN")) {
-          resolve(`Error: Cannot resolve host "${host}"`);
+          reject(new Error(`Cannot resolve host "${host}"`));
         } else if (err.message.includes("EHOSTUNREACH") || err.message.includes("ENETUNREACH")) {
           resolve(`Port ${port} on ${host} is FILTERED/UNREACHABLE (${err.message}, ${latency}ms)`);
         } else {
-          resolve(`Error: ${err.message} (${latency}ms)`);
+          reject(new Error(`${err.message} (${latency}ms)`));
         }
       });
 

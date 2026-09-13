@@ -101,31 +101,36 @@ export const shellTool: Tool = {
     },
     required: ["command"],
   },
-  execute: async ({
-    command,
-    args: explicitArgs,
-    cwd = ".",
-    timeout = SHELL_TIMEOUT_MS,
-  }: {
-    command: string;
-    args?: string[];
-    cwd?: string;
-    timeout?: number;
-  }) => {
+  execute: async (
+    {
+      command,
+      args: explicitArgs,
+      cwd = ".",
+      timeout = SHELL_TIMEOUT_MS,
+    }: {
+      command: string;
+      args?: string[];
+      cwd?: string;
+      timeout?: number;
+    },
+    signal?: AbortSignal,
+  ) => {
     if (!command || typeof command !== "string") {
-      return "Error: command string is required";
+      throw new Error("command string is required");
     }
 
     const parsedTokens = parseCommandLine(command.trim());
     if (parsedTokens.length === 0) {
-      return "Error: empty command";
+      throw new Error("empty command");
     }
 
     const baseCmd = parsedTokens[0].toLowerCase();
     const baseCmdName = baseCmd.split("/").pop() || baseCmd;
 
     if (!ALLOWED_COMMANDS.has(baseCmdName)) {
-      return `Error: Command "${baseCmdName}" is not in the allowed list. Allowed: ${Array.from(ALLOWED_COMMANDS).join(", ")}`;
+      throw new Error(
+        `Command "${baseCmdName}" is not in the allowed list. Allowed: ${Array.from(ALLOWED_COMMANDS).join(", ")}`,
+      );
     }
 
     const finalArgs: string[] = Array.isArray(explicitArgs) && explicitArgs.length > 0
@@ -134,18 +139,20 @@ export const shellTool: Tool = {
 
     const blocked = finalArgs.find((a) => BLOCKED_FLAGS.has(a));
     if (blocked) {
-      return `Error: Flag "${blocked}" is not allowed (inline code execution)`;
+      throw new Error(`Flag "${blocked}" is not allowed (inline code execution)`);
     }
 
     if (timeout > SHELL_TIMEOUT_MS) {
-      return `Error: Timeout cannot exceed ${SHELL_TIMEOUT_MS}ms`;
+      throw new Error(`Timeout cannot exceed ${SHELL_TIMEOUT_MS}ms`);
     }
 
     let resolvedCwd: string;
     try {
       resolvedCwd = await resolveSafe(cwd);
     } catch (err: any) {
-      return `Error: Working directory "${cwd}" is invalid or outside the project root`;
+      throw new Error(
+        `Working directory "${cwd}" is invalid or outside the project root`,
+      );
     }
 
     try {
@@ -154,6 +161,9 @@ export const shellTool: Tool = {
         timeout,
         maxBuffer: SHELL_MAX_OUTPUT,
         shell: false,
+        // Cancelling the run kills the child instead of letting it run out its
+        // timeout after the client has already been told the run stopped.
+        signal,
       });
 
       let output = stdout;
@@ -167,13 +177,31 @@ export const shellTool: Tool = {
 
       return output || "(no output)";
     } catch (error: any) {
+      if (signal?.aborted) {
+        throw new Error("Command cancelled");
+      }
       if (error.killed && error.signal === "SIGTERM") {
-        return `Error: Command timed out after ${timeout}ms`;
+        throw new Error(`Command timed out after ${timeout}ms`);
       }
       if (error.message?.includes("maxBuffer")) {
-        return `Error: Output exceeded ${SHELL_MAX_OUTPUT} bytes limit`;
+        throw new Error(`Output exceeded ${SHELL_MAX_OUTPUT} bytes limit`);
       }
-      return `Error: ${error.message || String(error)}`;
+
+      // execFile rejects on any non-zero exit, but still attaches the output.
+      // Compilers, test runners and git report what went wrong on stdout/stderr,
+      // so returning only error.message tells the model it failed but not why.
+      const out = [error.stdout, error.stderr && `stderr: ${error.stderr}`]
+        .filter(Boolean)
+        .join("\n")
+        .trim();
+      if (out) {
+        const code = error.code ?? "unknown";
+        return `Command exited with code ${code}:\n${out}`.slice(
+          0,
+          SHELL_MAX_OUTPUT,
+        );
+      }
+      throw new Error(error.message || String(error));
     }
   },
 };

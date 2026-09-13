@@ -1,8 +1,19 @@
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
-import type { RunStatus } from "@/lib/types"
+import type { RunEndReason, RunStatus } from "@/lib/types"
 
-export function RunStatusBadge({ status }: { status: RunStatus }) {
+export function RunStatusBadge({
+  status,
+  reason,
+}: {
+  status: RunStatus
+  reason?: RunEndReason
+}) {
+  // A run that hit the step limit still answered, but from what it had rather
+  // than from finishing the job. Worth telling apart from a real completion.
+  if (status === "completed" && reason === "step-limit") {
+    return <Badge variant="outline">Step limit</Badge>
+  }
   switch (status) {
     case "running":
       return (

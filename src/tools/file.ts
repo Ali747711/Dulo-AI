@@ -43,8 +43,10 @@ export const resolveSafe = async (relativePath: string): Promise<string> => {
   return resolved;
 };
 
-const toErrorText = (error: unknown): string =>
-  `Error: ${error instanceof Error ? error.message : String(error)}`;
+/** Re-throw as a plain Error; the agent formats it for the model. */
+const rethrow = (error: unknown): never => {
+  throw error instanceof Error ? error : new Error(String(error));
+};
 
 export const listFilesTool: Tool = {
   name: "list_files",
@@ -68,7 +70,7 @@ export const listFilesTool: Tool = {
         .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name));
       return lines.length > 0 ? lines.join("\n") : "(empty directory)";
     } catch (error) {
-      return toErrorText(error);
+      return rethrow(error);
     }
   },
 };
@@ -91,7 +93,7 @@ export const readFileTool: Tool = {
       const safePath = await resolveSafe(filePath);
       return await readFile(safePath, "utf8");
     } catch (error) {
-      return toErrorText(error);
+      return rethrow(error);
     }
   },
 };
@@ -117,7 +119,7 @@ export const writeFileTool: Tool = {
       await writeFile(target, content, "utf8");
       return `Wrote ${content.length} characters to ${filePath}`;
     } catch (error) {
-      return toErrorText(error);
+      return rethrow(error);
     }
   },
 };
@@ -158,6 +160,7 @@ export const globTool: Tool = {
       const defaultIgnore = ["node_modules", "node_modules/**", ".git", ".git/**", "dist", "dist/**", "build", "build/**", "*.log"];
       const allIgnore: string[] = [...defaultIgnore, ...ignore];
 
+      const rootWithSep = ROOT + path.sep;
       const matches: string[] = [];
       for await (const entry of glob(pattern, {
         cwd: safeCwd,
@@ -165,7 +168,11 @@ export const globTool: Tool = {
         exclude: allIgnore,
       })) {
         if (!entry.isFile()) continue;
-        matches.push(path.join(entry.parentPath, entry.name));
+        const matchPath = path.join(entry.parentPath, entry.name);
+        // A pattern containing "../" can walk the match outside the project
+        // root even though safeCwd itself is validated — skip those.
+        if (matchPath !== ROOT && !matchPath.startsWith(rootWithSep)) continue;
+        matches.push(matchPath);
         if (matches.length >= maxResults) break;
       }
 
@@ -182,7 +189,7 @@ export const globTool: Tool = {
 
       return output;
     } catch (error) {
-      return toErrorText(error);
+      return rethrow(error);
     }
   },
 };
@@ -226,7 +233,7 @@ export const fileCompressTool: Tool = {
       const stats = await stat(resolvedOutput);
       return `Compressed ${inputPath} -> ${outputPath} (${stats.size} bytes, ${algorithm})`;
     } catch (error) {
-      return toErrorText(error);
+      return rethrow(error);
     }
   },
 };
@@ -270,7 +277,7 @@ export const fileExtractTool: Tool = {
       const stats = await stat(resolvedOutput);
       return `Extracted ${inputPath} -> ${outputPath} (${stats.size} bytes, ${algorithm})`;
     } catch (error) {
-      return toErrorText(error);
+      return rethrow(error);
     }
   },
 };

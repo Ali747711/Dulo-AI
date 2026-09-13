@@ -198,13 +198,13 @@ export const calculateTool: Tool = {
   },
   execute: async ({ expression }: { expression: string }) => {
     if (!expression || typeof expression !== "string") {
-      return "Error: Expression string is required";
+      throw new Error("Expression string is required");
     }
     try {
       const result = evaluateMath(expression);
       return String(result);
     } catch (error: any) {
-      return `Error: ${error.message || "Invalid math expression"}`;
+      throw new Error(error.message || "Invalid math expression");
     }
   },
 };
@@ -235,7 +235,7 @@ export const getRandomNumberTool: Tool = {
   },
   execute: async ({ min, max }: { min: number; max: number }) => {
     if (typeof min !== "number" || typeof max !== "number") {
-      return "Error: min and max must be numbers";
+      throw new Error("min and max must be numbers");
     }
     if (min > max) [min, max] = [max, min];
     const random = Math.floor(Math.random() * (max - min + 1)) + min;
@@ -313,7 +313,7 @@ export const generatePasswordTool: Tool = {
     excludeSimilar?: boolean;
   }) => {
     if (length < 8 || length > 128) {
-      return "Error: Length must be between 8 and 128";
+      throw new Error("Length must be between 8 and 128");
     }
 
     let uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -335,7 +335,7 @@ export const generatePasswordTool: Tool = {
     if (includeSymbols) charset += symbols;
 
     if (charset.length === 0) {
-      return "Error: At least one character type must be enabled";
+      throw new Error("At least one character type must be enabled");
     }
 
     const bytes = crypto.randomBytes(length);

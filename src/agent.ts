@@ -1,6 +1,6 @@
 // src/agent.ts
 import { callLLM } from "./llm.js";
-import { tools as defaultTools } from "./tools.js";
+import { tools as defaultTools } from "./tools/index.js";
 import type { RunEvent, RunResult } from "./events.js";
 import type { Message, Tool } from "./types.js";
 
@@ -8,6 +8,12 @@ const SYSTEM_PROMPT = `You are a helpful assistant with access to tools.
 Use tools when needed. When you have the final answer, just reply normally without calling tools.`;
 
 const DEFAULT_MAX_STEPS = 8;
+
+// Asked for on the final allowed step, with no tools offered, so a run that hits
+// the limit returns what it learned instead of a bare "reached max steps" error.
+const WRAP_UP_PROMPT = `You have reached the step limit and cannot call any more tools.
+Answer now using only what you already know from this conversation.
+State what you found, what you could not finish, and what the next step would be.`;
 
 export interface RunOptions {
   /** Tools the model may call. Defaults to every registered tool. */
@@ -27,7 +33,12 @@ export interface RunOptions {
 interface ToolOutcome {
   result: string;
   isError: boolean;
+  /** Set only when the tool threw; the raw message, no "Error: " prefix. */
+  errorMessage?: string;
 }
+
+const messageOf = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 const parseArgs = (raw: string): Record<string, unknown> => {
   const parsed: unknown = JSON.parse(raw || "{}");
@@ -37,35 +48,40 @@ const parseArgs = (raw: string): Record<string, unknown> => {
   return parsed as Record<string, unknown>;
 };
 
-// A throwing tool must never crash the run: the model gets the error text back
+const failed = (message: string): ToolOutcome => ({
+  result: `Error: ${message}`,
+  isError: true,
+  errorMessage: message,
+});
+
+// A throwing tool must never crash the run: the model gets the error text back.
+// Failure is whether the tool threw, never what its output happens to start with.
 const executeTool = async (
   tools: Tool[],
   name: string,
   rawArgs: string,
+  signal?: AbortSignal,
 ): Promise<{ args: Record<string, unknown>; outcome: ToolOutcome }> => {
   const tool = tools.find((t) => t.name === name);
   if (!tool) {
-    return {
-      args: {},
-      outcome: { result: `Error: Tool "${name}" not found`, isError: true },
-    };
+    return { args: {}, outcome: failed(`Tool "${name}" not found`) };
   }
   let args: Record<string, unknown>;
   try {
     args = parseArgs(rawArgs);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     return {
       args: { raw: rawArgs },
-      outcome: { result: `Error: invalid arguments (${message})`, isError: true },
+      outcome: failed(`invalid arguments (${messageOf(error)})`),
     };
   }
+  if (signal?.aborted) {
+    return { args, outcome: failed("cancelled before the tool started") };
+  }
   try {
-    const result = await tool.execute(args);
-    return { args, outcome: { result, isError: result.startsWith("Error:") } };
+    return { args, outcome: { result: await tool.execute(args, signal), isError: false } };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { args, outcome: { result: `Error: ${message}`, isError: true } };
+    return { args, outcome: failed(messageOf(error)) };
   }
 };
 
@@ -102,8 +118,12 @@ export async function runAgent(
       if (signal?.aborted) {
         return { status: "cancelled", steps: step, durationMs: elapsed() };
       }
-      const message = error instanceof Error ? error.message : String(error);
-      return { status: "failed", error: message, steps: step, durationMs: elapsed() };
+      return {
+        status: "failed",
+        error: messageOf(error),
+        steps: step,
+        durationMs: elapsed(),
+      };
     }
     messages.push(response);
 
@@ -136,6 +156,7 @@ export async function runAgent(
             tools,
             toolName,
             toolCall.function.arguments,
+            signal,
           );
           onEvent({
             type: "tool.result",
@@ -145,6 +166,9 @@ export async function runAgent(
             result: outcome.result,
             durationMs: Date.now() - t0,
             isError: outcome.isError,
+            ...(outcome.errorMessage
+              ? { error: { message: outcome.errorMessage } }
+              : {}),
           });
           return {
             callId,
@@ -171,15 +195,45 @@ export async function runAgent(
       return {
         status: "completed",
         finalAnswer: response.content,
+        reason: "answered",
         steps: step,
         durationMs: elapsed(),
       };
     }
   }
 
+  // Out of steps. Every tool result is still sitting in `messages`, so ask for a
+  // summary with no tools offered rather than throwing that work away.
+  if (signal?.aborted) {
+    return { status: "cancelled", steps: maxSteps, durationMs: elapsed() };
+  }
+  try {
+    const wrapUp = await callLLM(
+      [...messages, { role: "user", content: WRAP_UP_PROMPT }],
+      [],
+      { model, temperature, signal },
+    );
+    if (wrapUp.content) {
+      onEvent({ type: "assistant", step: maxSteps, text: wrapUp.content });
+      return {
+        status: "completed",
+        finalAnswer: wrapUp.content,
+        reason: "step-limit",
+        steps: maxSteps,
+        durationMs: elapsed(),
+      };
+    }
+  } catch (error) {
+    if (signal?.aborted) {
+      return { status: "cancelled", steps: maxSteps, durationMs: elapsed() };
+    }
+    // Fall through to the plain failure below; the wrap-up is best-effort.
+  }
+
   return {
     status: "failed",
     error: `Reached max steps (${maxSteps}) without a final answer.`,
+    reason: "step-limit",
     steps: maxSteps,
     durationMs: elapsed(),
   };

@@ -72,6 +72,7 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
           result: event.result,
           durationMs: event.durationMs,
           isError: event.isError,
+          errorMessage: event.error?.message,
           pending: false,
         }
         return {
@@ -97,6 +98,7 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
         status: event.status,
         finalAnswer: event.finalAnswer,
         error: event.error,
+        reason: event.reason,
         durationMs: event.durationMs,
       }
   }

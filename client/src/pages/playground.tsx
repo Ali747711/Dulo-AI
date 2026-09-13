@@ -138,7 +138,7 @@ function RunView({ run, onStop }: { run: Run; onStop: () => void }) {
               Stop
             </Button>
           )}
-          <RunStatusBadge status={run.status} />
+          <RunStatusBadge status={run.status} reason={run.reason} />
         </CardAction>
       </CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-4">
@@ -350,7 +350,7 @@ export function PlaygroundPage() {
                         {shortModel(run.model)}
                       </span>
                     </div>
-                    <RunStatusBadge status={run.status} />
+                    <RunStatusBadge status={run.status} reason={run.reason} />
                   </Button>
                 ))}
               </div>

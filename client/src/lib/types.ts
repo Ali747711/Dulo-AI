@@ -24,7 +24,10 @@ export interface ToolCallRecord {
   args: Record<string, unknown>
   result: string
   durationMs: number
+  /** True only when the tool threw, never inferred from the result text. */
   isError: boolean
+  /** Present when isError; the message without the "Error: " prefix. */
+  errorMessage?: string
   /** True between tool.call and tool.result events. */
   pending: boolean
 }
@@ -37,6 +40,12 @@ export interface RunStep {
 
 export type RunStatus = "running" | "completed" | "failed" | "cancelled"
 
+/**
+ * Why a run ended. "step-limit" means the agent ran out of steps and summarised
+ * what it had instead of failing outright.
+ */
+export type RunEndReason = "answered" | "step-limit"
+
 export interface Run {
   id: string
   query: string
@@ -48,6 +57,7 @@ export interface Run {
   steps: RunStep[]
   finalAnswer?: string
   error?: string
+  reason?: RunEndReason
 }
 
 export interface Settings {
@@ -102,6 +112,7 @@ export type RunEvent =
       result: string
       durationMs: number
       isError: boolean
+      error?: { message: string }
     }
   | { type: "assistant"; step: number; text: string }
   | {
@@ -109,6 +120,7 @@ export type RunEvent =
       status: "completed" | "failed" | "cancelled"
       finalAnswer?: string
       error?: string
+      reason?: RunEndReason
       durationMs: number
       steps: number
     }
