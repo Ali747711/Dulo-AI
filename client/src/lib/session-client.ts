@@ -2,6 +2,7 @@
 // HTTP client for /api/sessions/* (src/session/routes.ts in the harness).
 import { describeFailure, drain, endpoint, wait } from "./agent-client"
 import type {
+  QueuedMessage,
   Session,
   SessionEvent,
   SessionSnapshot,
@@ -15,7 +16,11 @@ const RECONNECT_MAX_MS = 30_000
 const jsonHeaders = { "Content-Type": "application/json" }
 
 /** fetch that turns network failures into the panel's standard message. */
-const call = async (base: string, path: string, init?: RequestInit): Promise<Response> => {
+const call = async (
+  base: string,
+  path: string,
+  init?: RequestInit
+): Promise<Response> => {
   try {
     return await fetch(endpoint(base, path), init)
   } catch (error) {
@@ -26,7 +31,9 @@ const call = async (base: string, path: string, init?: RequestInit): Promise<Res
 const expectOk = async (res: Response, what: string): Promise<Response> => {
   if (res.ok) return res
   const text = await res.text().catch(() => "")
-  throw new Error(`Harness ${what} failed (${res.status})${text ? `: ${text}` : ""}`)
+  throw new Error(
+    `Harness ${what} failed (${res.status})${text ? `: ${text}` : ""}`
+  )
 }
 
 export const listSessions = async (base: string): Promise<SessionSummary[]> => {
@@ -53,7 +60,10 @@ export const getSession = async (
   base: string,
   id: string
 ): Promise<SessionSnapshot> => {
-  const res = await expectOk(await call(base, `/api/sessions/${id}`), "session load")
+  const res = await expectOk(
+    await call(base, `/api/sessions/${id}`),
+    "session load"
+  )
   return (await res.json()) as SessionSnapshot
 }
 
@@ -73,7 +83,10 @@ export const renameSession = async (
   return (await res.json()) as Session
 }
 
-export const deleteSession = async (base: string, id: string): Promise<void> => {
+export const deleteSession = async (
+  base: string,
+  id: string
+): Promise<void> => {
   await expectOk(
     await call(base, `/api/sessions/${id}`, { method: "DELETE" }),
     "session delete"
@@ -82,8 +95,7 @@ export const deleteSession = async (base: string, id: string): Promise<void> => 
 
 export type SendOutcome =
   | { status: "started"; turn: StartedTurn }
-  /** A turn is already running. Plan 3 turns this into a queued message. */
-  | { status: "running" }
+  | { status: "queued"; queued: QueuedMessage }
 
 export const sendMessage = async (
   base: string,
@@ -95,14 +107,23 @@ export const sendMessage = async (
     headers: jsonHeaders,
     body: JSON.stringify({ text }),
   })
-  if (res.status === 409) return { status: "running" }
+  if (res.status === 202)
+    return {
+      status: "queued",
+      queued: (await res.json()).queued as QueuedMessage,
+    }
   await expectOk(res, "message send")
   return { status: "started", turn: (await res.json()) as StartedTurn }
 }
 
-export const cancelSession = async (base: string, id: string): Promise<boolean> => {
+export const cancelSession = async (
+  base: string,
+  id: string
+): Promise<boolean> => {
   try {
-    const res = await call(base, `/api/sessions/${id}/cancel`, { method: "POST" })
+    const res = await call(base, `/api/sessions/${id}/cancel`, {
+      method: "POST",
+    })
     return res.ok
   } catch {
     return false
@@ -116,15 +137,67 @@ export const replySessionPermission = async (
   decision: "allow" | "deny" | "always"
 ): Promise<boolean> => {
   try {
-    const res = await call(base, `/api/sessions/${sessionId}/permission/${requestId}`, {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify({ decision }),
-    })
+    const res = await call(
+      base,
+      `/api/sessions/${sessionId}/permission/${requestId}`,
+      {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({ decision }),
+      }
+    )
     return res.ok
   } catch {
     return false
   }
+}
+
+export const patchQueuedMessage = async (
+  base: string,
+  sessionId: string,
+  msgId: string,
+  patch: Partial<Pick<QueuedMessage, "parts" | "parentId" | "model" | "agent">>
+): Promise<QueuedMessage> => {
+  const res = await expectOk(
+    await call(base, `/api/sessions/${sessionId}/queue/${msgId}`, {
+      method: "PATCH",
+      headers: jsonHeaders,
+      body: JSON.stringify(patch),
+    }),
+    "queued message patch"
+  )
+  return (await res.json()) as QueuedMessage
+}
+
+export const removeQueuedMessage = async (
+  base: string,
+  sessionId: string,
+  msgId: string
+): Promise<void> => {
+  await expectOk(
+    await call(base, `/api/sessions/${sessionId}/queue/${msgId}`, {
+      method: "DELETE",
+    }),
+    "queued message remove"
+  )
+}
+
+export type SendQueuedOutcome =
+  { sent: true; turn: StartedTurn } | { sent: false }
+
+export const sendQueuedMessage = async (
+  base: string,
+  sessionId: string,
+  msgId: string
+): Promise<SendQueuedOutcome> => {
+  const res = await call(
+    base,
+    `/api/sessions/${sessionId}/queue/${msgId}/send`,
+    { method: "POST" }
+  )
+  if (res.status === 409) return { sent: false }
+  await expectOk(res, "queued message send")
+  return { sent: true, turn: (await res.json()) as StartedTurn }
 }
 
 const backoff = (attempt: number): number =>

@@ -174,10 +174,8 @@ export function ChatPage() {
     setDraft("")
     try {
       const outcome = await sendMessage(base, selectedId, text)
-      if (outcome.status === "running") {
-        // Plan 3 turns this into a queued message; until then, keep the text.
-        setDraft(text)
-        toast("A turn is still running — wait for it to finish, or press Stop")
+      if (outcome.status === "queued") {
+        toast("Queued — it will send once the current turn finishes")
       }
     } catch (error) {
       setDraft(text)

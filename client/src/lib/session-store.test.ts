@@ -235,6 +235,19 @@ describe("foldSessionEvent", () => {
     )
     expect(state.session.title).toBe("Renamed")
   })
+
+  it("replaces the queue on queue.updated", () => {
+    const queued = {
+      id: "q1",
+      parts: [{ type: "text" as const, text: "later" }],
+      queuedAt: "x",
+    }
+    const next = foldSessionEvent(
+      loaded(),
+      ev(1, { type: "queue.updated", queue: [queued] })
+    )
+    expect(next.session.queue).toEqual([queued])
+  })
 })
 
 describe("loadedFromSnapshot", () => {
