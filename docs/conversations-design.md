@@ -5,7 +5,7 @@ conversational agent — multi-turn sessions with memory, a message queue,
 branching, attachments, and per-turn model choice. Written for the agent that
 will implement it; the ordered task list lives in `conversations-plan.md`.
 
-Status: approved 2026-09-13. Owner: Ali. Author: Claude.
+Status: approved 2026-09-13. Plan 1 written (`conversations-plan.md`); implementation not started. Owner: Ali. Author: Claude.
 
 ---
 
@@ -326,15 +326,21 @@ New, session-only:
 
 One `seq` counter per session. `GET /api/sessions/:id/events?after=N` serves
 everything with `seq > N` — from `recent` while the session is live in
-memory, from `events.jsonl` otherwise — then stays open if a turn is running.
-This is `handleReattach` from `src/server.ts` re-keyed.
+memory, from `events.jsonl` otherwise — and then **stays open until the client
+disconnects**, across turns, so a chat client sees the next turn (including one
+auto-started from the queue) without reconnecting. Only the legacy
+`/api/run` and `/api/run/:id/stream` streams close at that turn's `run.end`,
+because the TUI treats a closed stream as end-of-run. This is `handleReattach`
+from `src/server.ts` re-keyed.
 
 ## 8. Queue
 
 - `POST /api/sessions/:id/messages` while `status === "running"` appends a
   `QueuedMessage`, persists the session, emits `queue.updated`, returns
   `202 { queued: QueuedMessage }`. While idle it starts a turn and returns
-  `200 { turnId, userMessageId, assistantMessageId }`.
+  `200 { turnId, userMessageId, assistantMessageId }`. (Until Plan 3 lands,
+  send-while-running returns `409`; Plan 1 ships the turn model without the
+  queue.)
 - After a turn **completes**, the first queued item is dequeued and sent as the
   next turn with its own `parentId`/model/agent, in the same tick, before
   `status` is observed as idle by anyone. `queue.updated` and
