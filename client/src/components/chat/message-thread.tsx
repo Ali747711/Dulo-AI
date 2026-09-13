@@ -6,6 +6,7 @@ import { AssistantMessage } from "@/components/chat/assistant-message"
 import { UserMessage } from "@/components/chat/user-message"
 import { PermissionPrompt, type PermissionChoice } from "@/components/permission-prompt"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
 import {
   Empty,
   EmptyDescription,
@@ -21,17 +22,24 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
+import { siblingsOf } from "@/lib/tree"
 import type { ChatMessage } from "@/lib/session-types"
 import type { PendingPermission } from "@/lib/types"
 
 interface MessageThreadProps {
   /** Completed messages on the current branch, root first. */
   messages: ChatMessage[]
+  /** Every message in the session, every branch — for sibling lookups only. */
+  allMessages: ChatMessage[]
   /** The assistant message being written right now, if any. */
   liveAssistant?: ChatMessage
   permissions: PendingPermission[]
   lastError?: string
   onDecide: (requestId: string, decision: PermissionChoice) => void
+  onEdit: (message: ChatMessage) => void
+  onSwitchBranch: (messageId: string) => void
+  /** Present only when the last turn failed and can be retried. */
+  onRetry?: () => void
 }
 
 /**
@@ -41,10 +49,14 @@ interface MessageThreadProps {
  */
 export function MessageThread({
   messages,
+  allMessages,
   liveAssistant,
   permissions,
   lastError,
   onDecide,
+  onEdit,
+  onSwitchBranch,
+  onRetry,
 }: MessageThreadProps) {
   const empty = messages.length === 0 && !liveAssistant
   return (
@@ -68,19 +80,40 @@ export function MessageThread({
                 </Empty>
               </MessageScrollerItem>
             )}
-            {messages.map((message) => (
-              <MessageScrollerItem
-                key={message.id}
-                messageId={message.id}
-                scrollAnchor={message.role === "user"}
-              >
-                {message.role === "user" ? (
-                  <UserMessage message={message} />
-                ) : (
-                  <AssistantMessage message={message} live={false} />
-                )}
-              </MessageScrollerItem>
-            ))}
+            {messages.map((message) => {
+              const sib =
+                message.role === "user"
+                  ? siblingsOf(allMessages, message.id)
+                  : null
+              return (
+                <MessageScrollerItem
+                  key={message.id}
+                  messageId={message.id}
+                  scrollAnchor={message.role === "user"}
+                >
+                  {message.role === "user" ? (
+                    <UserMessage
+                      message={message}
+                      onEdit={() => onEdit(message)}
+                      sibling={
+                        sib && sib.total > 1
+                          ? {
+                              index: sib.index,
+                              total: sib.total,
+                              onPrev: () =>
+                                onSwitchBranch(sib.ids[sib.index - 1]),
+                              onNext: () =>
+                                onSwitchBranch(sib.ids[sib.index + 1]),
+                            }
+                          : undefined
+                      }
+                    />
+                  ) : (
+                    <AssistantMessage message={message} live={false} />
+                  )}
+                </MessageScrollerItem>
+              )
+            })}
             {liveAssistant && (
               <MessageScrollerItem key={liveAssistant.id} messageId={liveAssistant.id}>
                 <AssistantMessage message={liveAssistant} live />
@@ -98,7 +131,19 @@ export function MessageThread({
               <MessageScrollerItem messageId="turn-error">
                 <Alert variant="destructive">
                   <AlertTitle>The turn failed</AlertTitle>
-                  <AlertDescription>{lastError}</AlertDescription>
+                  <AlertDescription className="flex min-w-0 items-center justify-between gap-2">
+                    <span className="min-w-0 break-words">{lastError}</span>
+                    {onRetry && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={onRetry}
+                      >
+                        Retry
+                      </Button>
+                    )}
+                  </AlertDescription>
                 </Alert>
               </MessageScrollerItem>
             )}

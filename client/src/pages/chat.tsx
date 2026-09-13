@@ -25,6 +25,7 @@ import {
   deleteSession,
   getSession,
   listSessions,
+  moveHead,
   removeQueuedMessage,
   renameSession,
   replySessionPermission,
@@ -32,7 +33,7 @@ import {
   sendQueuedMessage,
   streamSession,
 } from "@/lib/session-client"
-import type { QueuedMessage } from "@/lib/session-types"
+import type { ChatMessage, QueuedMessage } from "@/lib/session-types"
 import { useSessionStore } from "@/lib/session-store"
 import { useStore } from "@/lib/store"
 import { pathToHead } from "@/lib/tree"
@@ -53,6 +54,15 @@ export function ChatPage() {
 
   const selected = state.selectedId ? state.loaded[state.selectedId] : undefined
   const selectedId = state.selectedId
+
+  // Editing is per-session. The target carries its own session id rather than
+  // being cleared from an effect on every switch: a stale target simply stops
+  // applying, which keeps the reset out of render and out of an effect.
+  const [editing, setEditing] = React.useState<{
+    sessionId: string
+    parentId: string | null
+  } | null>(null)
+  const editTarget = editing?.sessionId === selectedId ? editing : null
 
   // ---- session list: on mount, when the harness comes online, on focus ----
   const refreshList = React.useCallback(() => {
@@ -190,14 +200,47 @@ export function ChatPage() {
   const send = async () => {
     if (!selectedId || !draft.trim()) return
     const text = draft
+    const parentId = editTarget?.parentId
     setDraft("")
     try {
-      const outcome = await sendMessage(base, selectedId, text)
+      const outcome = await sendMessage(
+        base,
+        selectedId,
+        text,
+        parentId !== undefined ? { parentId } : undefined
+      )
       if (outcome.status === "queued") {
         toast("Queued — it will send once the current turn finishes")
       }
+      setEditing(null)
     } catch (error) {
       setDraft(text)
+      toast.error(describe(error))
+    }
+  }
+
+  // Editing does not mutate the original message: the resend is a sibling of
+  // it, so the harness branches and `pathToHead` shows the new branch.
+  const editMessage = (message: ChatMessage) => {
+    if (!selectedId) return
+    const text = message.parts
+      .filter((p): p is Extract<typeof p, { type: "text" }> => p.type === "text")
+      .map((p) => p.text)
+      .join("\n\n")
+    setEditing({ sessionId: selectedId, parentId: message.parentId })
+    setDraft(text)
+  }
+
+  const cancelEdit = () => {
+    setEditing(null)
+    setDraft("")
+  }
+
+  const switchBranch = async (messageId: string) => {
+    if (!selectedId) return
+    try {
+      await moveHead(base, selectedId, messageId)
+    } catch (error) {
       toast.error(describe(error))
     }
   }
@@ -282,6 +325,17 @@ export function ChatPage() {
     />
   )
 
+  const editingBanner = editTarget && (
+    <div className="mx-auto flex w-full max-w-3xl items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1.5 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1 truncate">
+        Editing a previous message — sending will branch from here.
+      </span>
+      <Button size="xs" variant="ghost" onClick={cancelEdit}>
+        Cancel
+      </Button>
+    </div>
+  )
+
   return (
     // The header is 3rem; main has 1rem padding (1.5rem from md). The thread
     // needs a bounded height for MessageScroller to scroll, so it is sized to
@@ -338,11 +392,16 @@ export function ChatPage() {
 
         <MessageThread
           messages={path}
+          allMessages={selected?.messages ?? []}
           liveAssistant={selected?.liveTurn?.assistant}
           permissions={selected?.permissions ?? []}
           lastError={selected?.lastError}
           onDecide={(id, decision) => void decide(id, decision)}
+          onEdit={editMessage}
+          onSwitchBranch={(id) => void switchBranch(id)}
         />
+
+        {editingBanner}
 
         <Composer
           value={draft}
