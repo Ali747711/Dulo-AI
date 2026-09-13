@@ -87,7 +87,14 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
               ],
         }
       })
+    case "assistant.delta":
+      return updateStep(run, event.step, (s) => ({
+        ...s,
+        assistantText: (s.assistantText ?? "") + event.text,
+      }))
     case "assistant":
+      // The final text for the step; replaces whatever the deltas accumulated
+      // so a dropped chunk cannot leave a gap in the answer.
       return updateStep(run, event.step, (s) => ({
         ...s,
         assistantText: event.text,
@@ -99,6 +106,7 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
         finalAnswer: event.finalAnswer,
         error: event.error,
         reason: event.reason,
+        usage: event.usage,
         durationMs: event.durationMs,
       }
   }

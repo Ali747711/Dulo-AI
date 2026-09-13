@@ -10,6 +10,13 @@ export type RunStatus = "completed" | "failed" | "cancelled";
  */
 export type RunEndReason = "answered" | "step-limit";
 
+/** Token counts summed over every model call in a run. */
+export interface RunUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export type RunEvent =
   | {
       type: "run.start";
@@ -38,6 +45,9 @@ export type RunEvent =
       /** Present when isError; the thrown message without the "Error: " prefix. */
       error?: { message: string };
     }
+  /** A piece of assistant text as it streams. Concatenating every delta for a
+   *  step yields the same text as that step's "assistant" event. */
+  | { type: "assistant.delta"; step: number; text: string }
   | { type: "assistant"; step: number; text: string }
   | {
       type: "run.end";
@@ -45,6 +55,7 @@ export type RunEvent =
       finalAnswer?: string;
       error?: string;
       reason?: RunEndReason;
+      usage?: RunUsage;
       durationMs: number;
       steps: number;
     };
@@ -54,6 +65,7 @@ export interface RunResult {
   finalAnswer?: string;
   error?: string;
   reason?: RunEndReason;
+  usage?: RunUsage;
   steps: number;
   durationMs: number;
 }

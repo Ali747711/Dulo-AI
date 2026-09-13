@@ -1,8 +1,9 @@
 // src/llm.ts
-import type { Message, Tool } from "./types.js";
+import type { Message, Tool, ToolCall } from "./types.js";
 
-// Override to point at a local stub during testing
-const OPENROUTER_URL =
+// Read per call, not once at import, so a test can point it at a local stub
+// after this module has already been loaded.
+const openRouterUrl = (): string =>
   process.env.OPENROUTER_URL ?? "https://openrouter.ai/api/v1/chat/completions";
 
 // Free models that support tools (as of Sep 2026). Override with OPENROUTER_MODEL in .env
@@ -15,6 +16,55 @@ export const FALLBACK_MODELS = [
   "nvidia/nemotron-3-super-120b-a12b:free",
 ];
 
+const MAX_ATTEMPTS = 3;
+const BASE_BACKOFF_MS = 500;
+const MAX_BACKOFF_MS = 10_000;
+
+/**
+ * Why a call failed. `retryable` says whether trying the identical request
+ * again could plausibly work — resending a request the provider rejected on its
+ * merits only wastes the user's wall-clock time and quota.
+ */
+export type FailureKind =
+  | "auth"
+  | "context-overflow"
+  | "invalid"
+  | "network"
+  | "quota"
+  | "rate-limit"
+  | "server";
+
+export class LlmError extends Error {
+  readonly kind: FailureKind;
+  readonly retryable: boolean;
+  readonly status?: number;
+  readonly retryAfterMs?: number;
+
+  constructor(
+    message: string,
+    init: {
+      kind: FailureKind;
+      retryable: boolean;
+      status?: number;
+      retryAfterMs?: number;
+      cause?: unknown;
+    },
+  ) {
+    super(message, { cause: init.cause });
+    this.name = "LlmError";
+    this.kind = init.kind;
+    this.retryable = init.retryable;
+    this.status = init.status;
+    this.retryAfterMs = init.retryAfterMs;
+  }
+}
+
+export interface Usage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface CallOptions {
   /** Override the default model for this request. */
   model?: string;
@@ -22,6 +72,13 @@ export interface CallOptions {
   temperature?: number;
   /** Aborts the HTTP request. */
   signal?: AbortSignal;
+  /** Receives assistant text as it arrives. */
+  onDelta?: (text: string) => void;
+}
+
+export interface CallResult {
+  message: Message;
+  usage?: Usage;
 }
 
 interface ChatCompletionRequest {
@@ -29,6 +86,8 @@ interface ChatCompletionRequest {
   models: string[];
   messages: Message[];
   temperature: number;
+  stream: true;
+  stream_options: { include_usage: true };
   tools?: {
     type: "function";
     function: {
@@ -40,14 +99,226 @@ interface ChatCompletionRequest {
   tool_choice?: "auto";
 }
 
+/**
+ * Providers report a too-long prompt as a 400 with prose, not a dedicated
+ * status. These are the phrasings seen in the wild; a miss only costs a worse
+ * error message, never a wrong retry decision, since 400 is non-retryable anyway.
+ */
+const CONTEXT_OVERFLOW = [
+  /context length/i,
+  /context window/i,
+  /maximum context/i,
+  /too many tokens/i,
+  /prompt is too long/i,
+  /reduce the length/i,
+  /exceeds? the maximum/i,
+  /token limit/i,
+];
+
+const parseRetryAfter = (headers: Headers): number | undefined => {
+  const ms = headers.get("retry-after-ms");
+  if (ms && Number.isFinite(Number(ms))) return Number(ms);
+
+  const after = headers.get("retry-after");
+  if (!after) return undefined;
+  if (Number.isFinite(Number(after))) return Number(after) * 1000;
+  const at = Date.parse(after);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
+};
+
+export const classifyFailure = (
+  status: number,
+  bodyText: string,
+  headers: Headers,
+): { kind: FailureKind; retryable: boolean; retryAfterMs?: number } => {
+  if (status === 429) {
+    return { kind: "rate-limit", retryable: true, retryAfterMs: parseRetryAfter(headers) };
+  }
+  if (status === 401 || status === 403) {
+    return { kind: "auth", retryable: false };
+  }
+  if (status === 402) {
+    return { kind: "quota", retryable: false };
+  }
+  if (status >= 500) {
+    return { kind: "server", retryable: true, retryAfterMs: parseRetryAfter(headers) };
+  }
+  if (CONTEXT_OVERFLOW.some((re) => re.test(bodyText))) {
+    return { kind: "context-overflow", retryable: false };
+  }
+  return { kind: "invalid", retryable: false };
+};
+
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error("aborted"));
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new Error("aborted"));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+
+/** Exponential backoff with jitter, unless the provider named a delay itself. */
+const backoffFor = (attempt: number, retryAfterMs?: number): number => {
+  const base = retryAfterMs ?? BASE_BACKOFF_MS * 2 ** attempt;
+  const capped = Math.min(base, MAX_BACKOFF_MS);
+  return Math.round(capped * (0.8 + Math.random() * 0.4));
+};
+
+const readUsage = (raw: unknown): Usage | undefined => {
+  const u = raw as
+    | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+    | undefined;
+  if (!u) return undefined;
+  const promptTokens = u.prompt_tokens ?? 0;
+  const completionTokens = u.completion_tokens ?? 0;
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: u.total_tokens ?? promptTokens + completionTokens,
+  };
+};
+
+const errorFromBody = (error: { message?: string; code?: number }): LlmError => {
+  const code = error.code;
+  // A 200 response carrying error.code 429 is OpenRouter's shared free-tier
+  // daily cap, not a transient rate limit. Retrying it only burns wall clock.
+  if (code === 429) {
+    return new LlmError(
+      `OpenRouter free-tier limit reached: ${error.message ?? "rate limited"}`,
+      { kind: "quota", retryable: false, status: 200 },
+    );
+  }
+  return new LlmError(`OpenRouter error ${code ?? ""}: ${error.message ?? "unknown"}`.trim(), {
+    kind: "invalid",
+    retryable: false,
+    status: 200,
+  });
+};
+
+/** Fold streamed tool-call fragments, which arrive split across many chunks. */
+class ToolCallAccumulator {
+  private readonly byIndex = new Map<
+    number,
+    { id?: string; name?: string; args: string }
+  >();
+
+  add(deltas: readonly any[]): void {
+    for (const delta of deltas) {
+      const index = delta.index ?? 0;
+      const entry = this.byIndex.get(index) ?? { args: "" };
+      if (delta.id) entry.id = delta.id;
+      if (delta.function?.name) entry.name = delta.function.name;
+      if (delta.function?.arguments) entry.args += delta.function.arguments;
+      this.byIndex.set(index, entry);
+    }
+  }
+
+  build(): ToolCall[] | undefined {
+    if (this.byIndex.size === 0) return undefined;
+    return [...this.byIndex.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([index, entry]) => ({
+        id: entry.id ?? `call_${index}`,
+        type: "function" as const,
+        function: { name: entry.name ?? "", arguments: entry.args || "{}" },
+      }));
+  }
+}
+
+/** Parse an OpenAI-compatible SSE body into one assistant message. */
+async function readStream(
+  body: ReadableStream<Uint8Array>,
+  onDelta?: (text: string) => void,
+): Promise<CallResult & { emitted: boolean }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const toolCalls = new ToolCallAccumulator();
+  let content = "";
+  let usage: Usage | undefined;
+  let emitted = false;
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // Events are separated by a blank line; keep any partial tail for later.
+      const events = buffer.split("\n\n");
+      buffer = events.pop() ?? "";
+
+      for (const event of events) {
+        for (const line of event.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+
+          let chunk: any;
+          try {
+            chunk = JSON.parse(payload);
+          } catch {
+            continue; // a comment or keep-alive, not a chunk
+          }
+          if (chunk.error) throw errorFromBody(chunk.error);
+
+          if (chunk.usage) usage = readUsage(chunk.usage) ?? usage;
+          const delta = chunk.choices?.[0]?.delta;
+          if (!delta) continue;
+          if (typeof delta.content === "string" && delta.content.length > 0) {
+            content += delta.content;
+            emitted = true;
+            onDelta?.(delta.content);
+          }
+          if (Array.isArray(delta.tool_calls)) toolCalls.add(delta.tool_calls);
+        }
+      }
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+
+  return {
+    message: {
+      role: "assistant",
+      content: content.length > 0 ? content : null,
+      tool_calls: toolCalls.build(),
+    },
+    usage,
+    emitted,
+  };
+}
+
+/** Parse a plain JSON completion. Stubs and some providers ignore `stream`. */
+function readJson(data: any): CallResult {
+  if (data.error) throw errorFromBody(data.error);
+  const message = data.choices?.[0]?.message as Message | undefined;
+  if (!message) {
+    throw new LlmError(
+      `OpenRouter returned no choices: ${JSON.stringify(data).slice(0, 500)}`,
+      { kind: "invalid", retryable: false },
+    );
+  }
+  return { message, usage: readUsage(data.usage) };
+}
+
 export async function callLLM(
   messages: Message[],
   tools: Tool[] = [],
   options: CallOptions = {},
-): Promise<Message> {
+): Promise<CallResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY not configured");
+    throw new LlmError("OPENROUTER_API_KEY not configured", {
+      kind: "auth",
+      retryable: false,
+    });
   }
 
   const model = options.model ?? MODEL;
@@ -59,6 +330,8 @@ export async function callLLM(
     models,
     messages,
     temperature: options.temperature ?? 0.2,
+    stream: true,
+    stream_options: { include_usage: true },
   };
 
   if (tools.length > 0) {
@@ -73,37 +346,65 @@ export async function callLLM(
     body.tool_choice = "auto";
   }
 
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:5173", // optional
-      "X-Title": "Dulo", // optional
-    },
-    body: JSON.stringify(body),
-    signal: options.signal,
-  });
+  let lastError: unknown;
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`OpenRouter error ${res.status}: ${err}`);
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let emitted = false;
+    try {
+      let res: Response;
+      try {
+        res = await fetch(openRouterUrl(), {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:5173", // optional
+            "X-Title": "Dulo", // optional
+          },
+          body: JSON.stringify(body),
+          signal: options.signal,
+        });
+      } catch (error) {
+        if (options.signal?.aborted) throw error;
+        // A socket-level failure never reached the model; safe to resend.
+        throw new LlmError(
+          `Could not reach OpenRouter: ${error instanceof Error ? error.message : String(error)}`,
+          { kind: "network", retryable: true, cause: error },
+        );
+      }
+
+      if (!res.ok) {
+        const text = await res.text();
+        const { kind, retryable, retryAfterMs } = classifyFailure(
+          res.status,
+          text,
+          res.headers,
+        );
+        throw new LlmError(`OpenRouter error ${res.status}: ${text.slice(0, 500)}`, {
+          kind,
+          retryable,
+          status: res.status,
+          retryAfterMs,
+        });
+      }
+
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("text/event-stream") || !res.body) {
+        return readJson(await res.json());
+      }
+      const result = await readStream(res.body, options.onDelta);
+      emitted = result.emitted;
+      return { message: result.message, usage: result.usage };
+    } catch (error) {
+      lastError = error;
+      const last = attempt === MAX_ATTEMPTS - 1;
+      const retryable = error instanceof LlmError && error.retryable;
+      // Resending after text already reached the client would repeat it in the
+      // UI; a partial answer is better than a duplicated one.
+      if (!retryable || last || emitted || options.signal?.aborted) throw error;
+      await sleep(backoffFor(attempt, error.retryAfterMs), options.signal);
+    }
   }
 
-  const data = (await res.json()) as {
-    choices?: { message: Message }[];
-    error?: { message: string; code?: number };
-  };
-  if (data.error) {
-    throw new Error(
-      `OpenRouter error ${data.error.code ?? ""}: ${data.error.message}`,
-    );
-  }
-  const message = data.choices?.[0]?.message;
-  if (!message) {
-    throw new Error(
-      `OpenRouter returned no choices: ${JSON.stringify(data).slice(0, 500)}`,
-    );
-  }
-  return message;
+  throw lastError;
 }

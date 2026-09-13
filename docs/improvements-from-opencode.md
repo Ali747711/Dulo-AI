@@ -73,7 +73,10 @@ A multi-MB log floods the context window. Add `MAX_READ_BYTES` / `MAX_READ_LINES
 `... (truncated, showing N of M lines)` marker. One-shot truncation is enough; skip opencode's
 offset/limit paging API.
 
-## Step 3 — Streaming and resilience in `src/llm.ts` (about a day)
+## Step 3 — Streaming and resilience in `src/llm.ts` (about a day) — ✅ DONE 2026-09-13
+
+*All five parts landed. `callLLM` now returns `{ message, usage }`; `OPENROUTER_URL` is read
+per call so stubs work after import.*
 
 Today `callLLM` does one non-streaming `fetch` with no retry and never reads `usage`.
 
@@ -197,4 +200,5 @@ ruleset — that matters once there are multiple agent profiles with different t
 
 - **Step 1 — done** (2026-09-13).
 - **Step 2 — done** (2026-09-13).
-- **Next: step 3** — streaming and resilience in `src/llm.ts`.
+- **Step 3 — done** (2026-09-13).
+- **Next: step 4** — runs that outlive their HTTP connection.

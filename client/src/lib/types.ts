@@ -46,6 +46,13 @@ export type RunStatus = "running" | "completed" | "failed" | "cancelled"
  */
 export type RunEndReason = "answered" | "step-limit"
 
+/** Token counts summed over every model call in a run. */
+export interface RunUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
 export interface Run {
   id: string
   query: string
@@ -58,6 +65,7 @@ export interface Run {
   finalAnswer?: string
   error?: string
   reason?: RunEndReason
+  usage?: RunUsage
 }
 
 export interface Settings {
@@ -114,6 +122,7 @@ export type RunEvent =
       isError: boolean
       error?: { message: string }
     }
+  | { type: "assistant.delta"; step: number; text: string }
   | { type: "assistant"; step: number; text: string }
   | {
       type: "run.end"
@@ -121,6 +130,7 @@ export type RunEvent =
       finalAnswer?: string
       error?: string
       reason?: RunEndReason
+      usage?: RunUsage
       durationMs: number
       steps: number
     }

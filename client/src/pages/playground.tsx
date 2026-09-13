@@ -130,6 +130,7 @@ function RunView({ run, onStop }: { run: Run; onStop: () => void }) {
           {shortModel(run.model)}
           {run.durationMs > 0 && ` · ${formatDuration(run.durationMs)}`}
           {` · ${run.steps.length} ${run.steps.length === 1 ? "step" : "steps"}`}
+          {run.usage && ` · ${run.usage.totalTokens.toLocaleString()} tokens`}
         </CardDescription>
         <CardAction className="flex items-center gap-2">
           {running && (

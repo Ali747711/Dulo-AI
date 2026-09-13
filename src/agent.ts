@@ -1,7 +1,7 @@
 // src/agent.ts
 import { callLLM } from "./llm.js";
 import { tools as defaultTools } from "./tools/index.js";
-import type { RunEvent, RunResult } from "./events.js";
+import type { RunEvent, RunResult, RunUsage } from "./events.js";
 import type { Message, Tool } from "./types.js";
 
 const SYSTEM_PROMPT = `You are a helpful assistant with access to tools.
@@ -100,6 +100,15 @@ export async function runAgent(
 
   const startedAt = Date.now();
   const elapsed = () => Date.now() - startedAt;
+
+  const usage: RunUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  const addUsage = (u?: RunUsage) => {
+    if (!u) return;
+    usage.promptTokens += u.promptTokens;
+    usage.completionTokens += u.completionTokens;
+    usage.totalTokens += u.totalTokens;
+  };
+  const seen = () => (usage.totalTokens > 0 ? usage : undefined);
   const messages: Message[] = [
     { role: "system", content: SYSTEM_PROMPT },
     { role: "user", content: userQuery },
@@ -107,22 +116,35 @@ export async function runAgent(
 
   for (let step = 1; step <= maxSteps; step++) {
     if (signal?.aborted) {
-      return { status: "cancelled", steps: step - 1, durationMs: elapsed() };
+      return {
+        status: "cancelled",
+        steps: step - 1,
+        durationMs: elapsed(),
+        usage: seen(),
+      };
     }
     onEvent({ type: "step.start", step });
 
     let response: Message;
     try {
-      response = await callLLM(messages, tools, { model, temperature, signal });
+      const call = await callLLM(messages, tools, {
+        model,
+        temperature,
+        signal,
+        onDelta: (text) => onEvent({ type: "assistant.delta", step, text }),
+      });
+      response = call.message;
+      addUsage(call.usage);
     } catch (error) {
       if (signal?.aborted) {
-        return { status: "cancelled", steps: step, durationMs: elapsed() };
+        return { status: "cancelled", steps: step, durationMs: elapsed(), usage: seen() };
       }
       return {
         status: "failed",
         error: messageOf(error),
         steps: step,
         durationMs: elapsed(),
+        usage: seen(),
       };
     }
     messages.push(response);
@@ -198,6 +220,7 @@ export async function runAgent(
         reason: "answered",
         steps: step,
         durationMs: elapsed(),
+        usage: seen(),
       };
     }
   }
@@ -205,27 +228,35 @@ export async function runAgent(
   // Out of steps. Every tool result is still sitting in `messages`, so ask for a
   // summary with no tools offered rather than throwing that work away.
   if (signal?.aborted) {
-    return { status: "cancelled", steps: maxSteps, durationMs: elapsed() };
+    return { status: "cancelled", steps: maxSteps, durationMs: elapsed(), usage: seen() };
   }
   try {
     const wrapUp = await callLLM(
       [...messages, { role: "user", content: WRAP_UP_PROMPT }],
       [],
-      { model, temperature, signal },
+      {
+        model,
+        temperature,
+        signal,
+        onDelta: (text) =>
+          onEvent({ type: "assistant.delta", step: maxSteps, text }),
+      },
     );
-    if (wrapUp.content) {
-      onEvent({ type: "assistant", step: maxSteps, text: wrapUp.content });
+    addUsage(wrapUp.usage);
+    if (wrapUp.message.content) {
+      onEvent({ type: "assistant", step: maxSteps, text: wrapUp.message.content });
       return {
         status: "completed",
-        finalAnswer: wrapUp.content,
+        finalAnswer: wrapUp.message.content,
         reason: "step-limit",
         steps: maxSteps,
         durationMs: elapsed(),
+        usage: seen(),
       };
     }
   } catch (error) {
     if (signal?.aborted) {
-      return { status: "cancelled", steps: maxSteps, durationMs: elapsed() };
+      return { status: "cancelled", steps: maxSteps, durationMs: elapsed(), usage: seen() };
     }
     // Fall through to the plain failure below; the wrap-up is best-effort.
   }
@@ -236,5 +267,6 @@ export async function runAgent(
     reason: "step-limit",
     steps: maxSteps,
     durationMs: elapsed(),
+    usage: seen(),
   };
 }
