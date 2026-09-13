@@ -14,7 +14,11 @@ export * from "./system.js";
 export * from "./network.js";
 export * from "./utility.js";
 
-export const tools: Tool[] = [
+/**
+ * Tools compiled into the harness. The full set the agent sees comes from
+ * src/registry.ts, which adds tools/custom/, MCP servers and skills on top.
+ */
+export const builtinTools: Tool[] = [
   ...fileTools,
   ...editTools,
   ...grepTools,

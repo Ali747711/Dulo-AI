@@ -1,6 +1,7 @@
 // src/agent.ts
 import { callLLM } from "./llm.js";
-import { tools as defaultTools } from "./tools/index.js";
+import { applyToolPolicy } from "./agents.js";
+import { getAgent, getRegistry } from "./registry.js";
 import type { RunEvent, RunResult, RunUsage } from "./events.js";
 import type { Message, Tool } from "./types.js";
 
@@ -18,6 +19,8 @@ State what you found, what you could not finish, and what the next step would be
 export interface RunOptions {
   /** Tools the model may call. Defaults to every registered tool. */
   tools?: Tool[];
+  /** Name of a profile in agents/: its prompt, model and tool policy win. */
+  agent?: string;
   /** OpenRouter model id. Defaults to the harness default. */
   model?: string;
   /** Safety limit on model round-trips. */
@@ -89,14 +92,31 @@ export async function runAgent(
   userQuery: string,
   options: RunOptions = {},
 ): Promise<RunResult> {
+  const registry = getRegistry();
+  const profile = options.agent ? getAgent(options.agent) : undefined;
+  if (options.agent && !profile) {
+    throw new Error(
+      `No agent named "${options.agent}". Available: ${
+        registry.agents.map((a) => a.name).join(", ") || "(none)"
+      }`,
+    );
+  }
+
   const {
-    tools = defaultTools,
-    model,
-    maxSteps = DEFAULT_MAX_STEPS,
-    temperature,
     onEvent = () => {},
     signal,
   } = options;
+  // Explicit options win over the profile, which wins over the defaults.
+  const model = options.model ?? profile?.model;
+  const temperature = options.temperature ?? profile?.temperature;
+  const maxSteps = options.maxSteps ?? profile?.maxSteps ?? DEFAULT_MAX_STEPS;
+  const tools = applyToolPolicy(
+    options.tools ?? registry.tools,
+    profile?.tools,
+  );
+  // A profile's body replaces the prompt entirely; the skills catalogue is
+  // appended either way so load_skill is discoverable.
+  const systemPrompt = (profile?.prompt ?? SYSTEM_PROMPT) + registry.skillsPrompt;
 
   const startedAt = Date.now();
   const elapsed = () => Date.now() - startedAt;
@@ -110,7 +130,7 @@ export async function runAgent(
   };
   const seen = () => (usage.totalTokens > 0 ? usage : undefined);
   const messages: Message[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
     { role: "user", content: userQuery },
   ];
 

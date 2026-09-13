@@ -216,7 +216,12 @@ The harness exposes a clean HTTP and Server-Sent Events API:
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Harness health, model configuration, tool count, API key check |
 | `GET` | `/api/tools` | Tool names, descriptions, and JSON Schema parameters |
+| `GET` | `/api/agents` | Named agent profiles loaded from `agents/` |
+| `GET` | `/api/skills` | Skill names and descriptions loaded from `skills/` |
 | `POST` | `/api/run` | Executes an agent run; streams Server-Sent Events |
+| `GET` | `/api/runs` | Run history recorded by the harness, newest first |
+| `GET` | `/api/run/:id/stream?after=N` | Reattach to a live run, or replay a finished one, from sequence `N` |
+| `POST` | `/api/run/:id/cancel` | Cancel a run in progress |
 
 ### `POST /api/run`
 Takes a JSON payload:
@@ -226,25 +231,85 @@ Takes a JSON payload:
   "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
   "maxSteps": 8,
   "temperature": 0.2,
-  "enabledTools": ["list_files", "read_file"]
+  "enabledTools": ["list_files", "read_file"],
+  "agent": "reviewer"
 }
 ```
 
-Streams `RunEvent` SSE chunks:
+Streams `RunEvent` SSE chunks, each carrying a monotonic `seq`:
 - `run.start` — Run metadata, runId, model, timestamp.
 - `step.start` — Current step index.
 - `tool.call` — Tool name, parsed arguments, unique call ID.
 - `tool.result` — Execution result, duration, error flag.
-- `assistant` — Intermediate thoughts or final markdown answer.
-- `run.end` — Final status (`completed`, `failed`, `cancelled`), duration, step count.
+- `assistant.delta` — A piece of the answer as the model writes it.
+- `assistant` — The step's complete text.
+- `run.end` — Final status (`completed`, `failed`, `cancelled`), reason, duration, step count, token usage.
+
+### Runs outlive their connection
+
+A run belongs to the harness, not to the HTTP response that started it. Closing the tab
+detaches the viewer; the run keeps going. Every event is appended to `runs/<id>.jsonl`
+with a sequence number, so a client that drops can reconnect with
+`GET /api/run/:id/stream?after=<last seq>` and resume without gaps or duplicates. This
+survives a browser refresh or a lost connection — not a restart of the harness process
+itself, which takes the running agent loop with it.
+
+---
+
+## Extending Dulo
+
+Four extension points, each a folder of files picked up at startup. All are optional.
+
+### `tools/custom/*.ts` — your own tools
+
+Default-export a `Tool` (or an array of them) and it is registered on the next start. No
+build step and no registration list: `tsx` runs TypeScript directly. See
+[tools/custom/example.ts](tools/custom/example.ts).
+
+### `skills/*.md` — instructions loaded on demand
+
+Markdown with `name` and `description` frontmatter. Only those two lines reach the system
+prompt; the body is loaded when the model calls `load_skill`. That is how you add
+situational guidance without paying for it on every request.
+
+### `agents/*.md` — named profiles
+
+Frontmatter overrides `model`, `temperature`, `maxSteps` and a `tools` allow/deny map
+(`"*": false` means deny by default). The body replaces the system prompt. Run one with
+`POST /api/run` `{"agent": "reviewer"}` or `npm start -- "query" --agent reviewer`. See
+[agents/reviewer.md](agents/reviewer.md).
+
+### `dulo.config.json` — configuration
+
+```json
+{
+  "disabledTools": ["get_env"],
+  "mcpServers": {
+    "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] },
+    "docs": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer ..." } }
+  }
+}
+```
+
+One flat file at the project root — no global config directory and no merge precedence.
+Copy [dulo.config.example.json](dulo.config.example.json) to get started.
 
 ---
 
 ## Model Context Protocol (MCP) Integration
 
-Looking to connect external MCP tool servers (e.g. GitHub, PostgreSQL, Docker, or custom tools)?
+MCP servers are connected once at startup and their tools merged into the same list as
+everything else, prefixed with the server name (`fs_read_file`). Entries with `command`
+are spawned as local stdio child processes; entries with `url` use Streamable HTTP.
+Clients are closed on `SIGINT`/`SIGTERM` so stdio servers are not orphaned.
 
-Dulo includes comprehensive research and an implementation blueprint for `@modelcontextprotocol/client` v2 integration. Read the complete proposal in [docs/mcp-research.md](docs/mcp-research.md).
+> **An MCP server is outside Dulo's sandbox.** Dulo's own file tools are confined to the
+> project root, but a filesystem MCP server obeys only its own arguments — pointed at `.`
+> it can read `.env`. Its tool descriptions and results are untrusted text the model
+> reads. Enable only servers you trust, and scope them as narrowly as the server allows.
+> MCP is off by default for this reason.
+
+Background and design notes: [docs/mcp-research.md](docs/mcp-research.md).
 
 ---
 

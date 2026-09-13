@@ -3,6 +3,7 @@
 import "dotenv/config";
 
 import { runAgent } from "./agent.js";
+import { closeRegistry, initRegistry } from "./registry.js";
 import type { RunEvent } from "./events.js";
 
 /** Set once the answer has been printed token by token, so it is not repeated. */
@@ -31,9 +32,14 @@ const printEvent = (event: RunEvent): void => {
 
 async function main() {
   const query = process.argv[2] || "What time is it and what is 15 * 8?";
+  // --agent <name> picks a profile from agents/
+  const agentFlag = process.argv.indexOf("--agent");
+  const agent = agentFlag !== -1 ? process.argv[agentFlag + 1] : undefined;
+
+  await initRegistry();
 
   console.log("User:", query);
-  const result = await runAgent(query, { onEvent: printEvent });
+  const result = await runAgent(query, { agent, onEvent: printEvent });
 
   if (result.status === "completed") {
     if (streamed) console.log("");
@@ -52,7 +58,10 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  // stdio MCP servers are child processes and would otherwise be orphaned.
+  .finally(() => closeRegistry());

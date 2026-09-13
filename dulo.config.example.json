@@ -1,0 +1,14 @@
+{
+  "disabledTools": ["get_env"],
+  "mcpServers": {
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    },
+    "docs": {
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer REPLACE_ME" },
+      "enabled": false
+    }
+  }
+}

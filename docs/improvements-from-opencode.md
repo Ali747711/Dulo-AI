@@ -128,7 +128,10 @@ backoff (1s, 2s, 4s, capped ~30s) until `run.end` or an explicit cancel.
 **4.4 `GET /api/runs`** — run history currently lives only in one browser's localStorage. Back it
 with the same log, plus a small `runs/index.json` so listing doesn't open every file.
 
-## Step 5 — Extensibility, cheaply (about a day)
+## Step 5 — Extensibility, cheaply (about a day) — ✅ DONE 2026-09-13
+
+*`src/registry.ts` resolves four folders at startup. MCP verified against the real
+filesystem server. Shipped with MCP off by default — see the security note below.*
 
 The real lesson from opencode's plugin system is that underneath the Effect machinery it is just
 **glob a folder, `import()` each file, read a default export**. Everything else is Markdown.
@@ -151,8 +154,12 @@ is how you add situational instructions without paying for them on every request
 plus a body that replaces `SYSTEM_PROMPT`. Lets a named persona be committed to the repo instead
 of re-specified by the client on every call.
 
-**5.5 MCP** — reading opencode's `config/mcp.ts` and `session/tools.ts` **confirms the plan already
-written in `docs/mcp-research.md`**: same SDK, same stdio + HTTP shapes, same name prefixing. Two
+**5.5 MCP** — *(implemented)* **Security note found while testing:** the official filesystem
+server pointed at `.` reads `.env` happily. Dulo's own file tools are sandboxed to the project
+root; an MCP server is not — it obeys only its own arguments, and its tool descriptions and
+results are untrusted text the model reads. MCP is therefore off by default. Reading opencode's
+`config/mcp.ts` and `session/tools.ts` **confirmed the plan already written in
+`docs/mcp-research.md`**: same SDK, same stdio + HTTP shapes, same name prefixing. Two
 details to lock in: connect once at process startup (not per request), and merge the results into
 the *same* `Tool[]` array `src/tools/index.ts` exports, so `agent.ts` needs no changes at all.
 Start without OAuth. Do 5.1 first.
@@ -204,4 +211,5 @@ ruleset — that matters once there are multiple agent profiles with different t
 - **Step 2 — done** (2026-09-13).
 - **Step 3 — done** (2026-09-13).
 - **Step 4 — done** (2026-09-13).
-- **Next: step 5** — extensibility: tool plugins, config, skills, agents, MCP.
+- **Step 5 — done** (2026-09-13).
+- **Next: step 6** — the permission gate, `manage_todos`, and a token budget guard.

@@ -5,8 +5,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { z } from "zod";
 
 import { runAgent } from "./agent.js";
+import type { Tool } from "./types.js";
 import { FALLBACK_MODELS, MODEL } from "./llm.js";
-import { tools } from "./tools/index.js";
+import { closeRegistry, getRegistry, initRegistry } from "./registry.js";
 import {
   cancelRun,
   createRun,
@@ -31,6 +32,8 @@ const RunRequest = z.object({
   temperature: z.number().min(0).max(2).optional(),
   /** Tool names the model may use. Omit for all tools. */
   enabledTools: z.array(z.string()).max(200).optional(),
+  /** Name of a profile in agents/. Its prompt and tool policy apply. */
+  agent: z.string().min(1).max(100).optional(),
 });
 
 const corsHeaders = {
@@ -94,9 +97,10 @@ const handleRun = async (req: IncomingMessage, res: ServerResponse): Promise<voi
     json(res, 400, { error: "invalid request", issues: parsed.error.issues });
     return;
   }
-  const { query, model, maxSteps, temperature, enabledTools } = parsed.data;
+  const { query, model, maxSteps, temperature, enabledTools, agent } = parsed.data;
+  const { tools } = getRegistry();
   const selectedTools = enabledTools
-    ? tools.filter((t) => enabledTools.includes(t.name))
+    ? tools.filter((t: Tool) => enabledTools.includes(t.name))
     : tools;
 
   const handle = createRun({ query, model: model ?? MODEL });
@@ -112,6 +116,7 @@ const handleRun = async (req: IncomingMessage, res: ServerResponse): Promise<voi
   try {
     const result = await runAgent(query, {
       tools: selectedTools,
+      agent,
       model,
       maxSteps,
       temperature,
@@ -179,7 +184,7 @@ const server = createServer((req, res) => {
       model: MODEL,
       fallbackModels: FALLBACK_MODELS,
       hasApiKey: Boolean(process.env.OPENROUTER_API_KEY),
-      toolCount: tools.length,
+      toolCount: getRegistry().tools.length,
     });
     return;
   }
@@ -187,7 +192,32 @@ const server = createServer((req, res) => {
     json(
       res,
       200,
-      tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+      getRegistry().tools.map(({ name, description, parameters }: Tool) => ({
+        name,
+        description,
+        parameters,
+      })),
+    );
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/agents") {
+    json(
+      res,
+      200,
+      getRegistry().agents.map(({ name, description, model, tools: policy }) => ({
+        name,
+        description,
+        model,
+        tools: policy,
+      })),
+    );
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/skills") {
+    json(
+      res,
+      200,
+      getRegistry().skills.map(({ name, description }) => ({ name, description })),
     );
     return;
   }
@@ -220,12 +250,27 @@ const server = createServer((req, res) => {
   json(res, 404, { error: "not found" });
 });
 
-void ensureRunsDir();
+// stdio MCP servers are child processes; without this they outlive the harness.
+const shutdown = (signal: string) => {
+  console.log(`\n[dulo] ${signal}, shutting down`);
+  void closeRegistry().finally(() => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref();
+  });
+};
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-server.listen(PORT, () => {
-  console.log(`Dulo harness API listening on http://localhost:${PORT}`);
-  console.log(`Allowing browser origin ${CLIENT_ORIGIN}`);
-  if (!process.env.OPENROUTER_API_KEY) {
-    console.warn("Warning: OPENROUTER_API_KEY is not set, runs will fail");
-  }
-});
+const start = async () => {
+  await ensureRunsDir();
+  await initRegistry();
+  server.listen(PORT, () => {
+    console.log(`Dulo harness API listening on http://localhost:${PORT}`);
+    console.log(`Allowing browser origin ${CLIENT_ORIGIN}`);
+    if (!process.env.OPENROUTER_API_KEY) {
+      console.warn("Warning: OPENROUTER_API_KEY is not set, runs will fail");
+    }
+  });
+};
+
+void start();
