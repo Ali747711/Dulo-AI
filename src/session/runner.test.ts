@@ -464,3 +464,50 @@ describe("runner, stalled provider", () => {
     }
   });
 });
+
+describe("runner, the ordinary build path", () => {
+  it("scaffolds, writes and previews without asking anyone anything (AC-16)", async () => {
+    // The whole point of tiers: a build inside the workspace must not
+    // interrupt the person, or they learn to click yes without reading.
+    // Cheap calls only: what is under test is the gate, not the tools. The
+    // slow ones (scaffold_project, npm install) are classified in risk.test.ts,
+    // and running them here for real would cost minutes and a network.
+    const buildSteps: { name: string; args: Record<string, unknown> }[] = [
+      { name: "make_dir", args: { path: "site/src/components/sections" } },
+      { name: "write_file", args: { path: "site/src/content/site.ts", content: "x" } },
+      { name: "edit_file", args: { path: "site/src/content/site.ts", oldString: "x", newString: "y" } },
+      { name: "read_file", args: { path: "site/src/content/site.ts" } },
+      { name: "list_files", args: { dir: "site" } },
+      { name: "manage_todos", args: { todos: [{ content: "build the page", status: "done" }] } },
+      { name: "dev_server", args: { action: "status", project: "site" } },
+    ];
+
+    const building = await startStubLlm((_req, i) =>
+      i < buildSteps.length
+        ? { toolCall: { name: buildSteps[i].name, args: buildSteps[i].args } }
+        : { text: "Your page is ready." },
+    );
+    useStubLlm(building);
+    try {
+      const session = await runner.createSession();
+      const started = await runner.startTurn(session.id, { parts: text("build the page") });
+      assert.ok(started && started.started);
+
+      await runner.awaitIdle(session.id);
+      const events = await runner.eventsAfter(session.id, 0);
+
+      const asked = events.filter((e) => e.type === "permission.ask");
+      assert.deepEqual(
+        asked.map((e) => (e as { tool: string }).tool),
+        [],
+        "an ordinary build asks nothing",
+      );
+      // Each one was recorded as having run unasked, so the log stays complete.
+      const auto = events.filter((e) => e.type === "permission.auto");
+      assert.equal(auto.length, buildSteps.length, "every call was recorded");
+    } finally {
+      await building.close();
+      useStubLlm(stub);
+    }
+  });
+});
