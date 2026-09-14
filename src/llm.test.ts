@@ -51,7 +51,10 @@ after(async () => {
 test("a stream that never sends a byte fails as a retryable stall after the retries", async () => {
   mode = "silent";
   requests = 0;
-  process.env.LLM_STALL_MS = "120";
+  // Comfortably above loopback connection time: the suite runs files in
+  // parallel, and a budget that can expire before the request is even sent
+  // would make this assert on a request the stub never saw.
+  process.env.LLM_STALL_MS = "400";
   process.env.LLM_TOTAL_MS = "60000";
   await assert.rejects(callLLM(history, [], { model: "stub" }), (error: unknown) => {
     assert.ok(error instanceof LlmError, `expected LlmError, got ${String(error)}`);
@@ -67,7 +70,7 @@ test("a stream that trickles keepalives forever fails on the total bound", async
   mode = "trickle";
   requests = 0;
   process.env.LLM_STALL_MS = "5000";
-  process.env.LLM_TOTAL_MS = "250";
+  process.env.LLM_TOTAL_MS = "700";
   await assert.rejects(callLLM(history, [], { model: "stub" }), (error: unknown) => {
     assert.ok(error instanceof LlmError);
     assert.equal(error.kind, "network");
@@ -80,7 +83,7 @@ test("a stream that trickles keepalives forever fails on the total bound", async
 test("a stall after text already reached the client is not retried", async () => {
   mode = "one-delta-then-silent";
   requests = 0;
-  process.env.LLM_STALL_MS = "120";
+  process.env.LLM_STALL_MS = "400";
   process.env.LLM_TOTAL_MS = "60000";
   const deltas: string[] = [];
   await assert.rejects(
