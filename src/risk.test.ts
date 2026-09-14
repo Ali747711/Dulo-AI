@@ -115,6 +115,42 @@ test("shell: building is ordinary, running code asks, pushing confirms (AC-18)",
   }
 });
 
+test("find is only a read until its flags make it act (review finding 1)", () => {
+  assert.equal(shell("find . -name '*.tsx'"), "allowed");
+  for (const command of [
+    "find . -delete",
+    "find / -exec rm {} ;",
+    "find . -execdir rm {} +",
+    "find . -ok rm {} ;",
+    "find . -fprint /tmp/out",
+  ]) {
+    assert.equal(shell(command), "confirm", `"${command}" deletes or runs something`);
+  }
+});
+
+test("a flag that moves the working root out of the workspace asks (review finding 3)", () => {
+  // resolveSafe confines the tool's own cwd, but npm's --prefix relocates what
+  // npm operates on, which nothing checks.
+  for (const command of [
+    "npm run build --prefix /tmp",
+    "npm install --prefix ../elsewhere",
+    "npm --prefix /tmp run build",
+    "git -C /elsewhere status",
+    "npm ci --cwd /tmp",
+  ]) {
+    assert.equal(shell(command), "ask", `"${command}" operates outside the workspace`);
+  }
+});
+
+test("tsc is a build step, and writing somewhere chosen by flag asks (review finding 4)", () => {
+  assert.equal(shell("tsc --noEmit"), "allowed");
+  assert.equal(shell("tsc -b"), "allowed");
+  assert.equal(shell("tsc --outDir /tmp/elsewhere"), "ask");
+  assert.equal(shell("tsc --outFile /tmp/bundle.js"), "ask");
+  // It compiles and writes; calling that "looking at files" would be a lie.
+  assert.doesNotMatch(classify("shell", { command: "tsc -b" }).what, /look at/);
+});
+
 test("shell: an unreadable command asks rather than running", () => {
   assert.equal(shell(""), "ask");
   assert.equal(shell('npm run "unclosed'), "ask");

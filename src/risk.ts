@@ -72,9 +72,26 @@ const confirm = (what: string, where: string, undo: string = UNDO.gone): RiskAss
 
 /** Read-only programs: they report, they do not change anything. */
 const SHELL_READS = new Set([
-  "ls", "cat", "head", "tail", "grep", "find", "wc", "echo", "pwd", "date",
-  "whoami", "id", "uname", "df", "du", "ps", "top", "free", "tsc",
+  "ls", "cat", "head", "tail", "grep", "wc", "echo", "pwd", "date",
+  "whoami", "id", "uname", "df", "du", "ps", "top", "free",
 ]);
+
+/**
+ * `find` reports — until a flag makes it act. `find . -delete` is the same
+ * action as remove_path{recursive}, which confirms, and find's own path
+ * argument is not confined to the workspace at all.
+ */
+const FIND_ACTS = new Set(["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"]);
+
+/**
+ * Flags that move what a program operates on outside the workspace. The tool's
+ * own `cwd` goes through resolveSafe; these do not, so npm's --prefix or git's
+ * -C would quietly relocate the whole operation.
+ */
+const ESCAPES_WORKSPACE = new Set(["--prefix", "--cwd", "-C", "--directory", "--workspace-root"]);
+
+/** Flags that make a compiler write wherever it is told. */
+const REDIRECTS_OUTPUT = new Set(["--outDir", "--outFile", "--out"]);
 
 /** `npm <sub>` that only builds, checks or installs, all inside the workspace. */
 const NPM_SAFE_SUBCOMMANDS = new Set(["install", "i", "ci", "test", "ls", "list", "why", "view"]);
@@ -119,6 +136,30 @@ const classifyShell = (args: Record<string, unknown>): RiskAssessment => {
 
   const sub = rest.find((token) => !token.startsWith("-")) ?? "";
 
+  if (rest.some((token) => ESCAPES_WORKSPACE.has(token))) {
+    return ask(
+      `Dulo wants to run "${binary}" somewhere other than the workspace`,
+      command,
+      "The workspace is the only place Dulo is confined to; this flag points outside it.",
+    );
+  }
+
+  if (binary === "find") {
+    return rest.some((token) => FIND_ACTS.has(token))
+      ? confirm("Dulo wants to find files and then delete or run something on each one", command)
+      : allowed("Dulo wants to find files by name", command, UNDO.nothing);
+  }
+
+  if (binary === "tsc") {
+    return rest.some((token) => REDIRECTS_OUTPUT.has(token))
+      ? ask(
+          "Dulo wants to compile the project and write the result somewhere it chose",
+          command,
+          "Check where it is writing to.",
+        )
+      : allowed("Dulo wants to compile and type-check the project", command);
+  }
+
   if (binary === "npm") {
     if (sub === "publish") {
       return confirm("Dulo wants to publish a package to the public npm registry", command);
@@ -136,6 +177,13 @@ const classifyShell = (args: Record<string, unknown>): RiskAssessment => {
             "It runs code from the project, so check what that script does.",
           );
     }
+    // Known and accepted: `npm install` and `npm run <script>` hand execution to
+    // npm, which runs package.json scripts (and dependencies' install scripts)
+    // through a real shell. That is the same power `node` has, and it is asked
+    // about. It stays allowed because it IS the ordinary build path the owner
+    // asked to run uninterrupted (Decisions 4) — a build that prompts teaches
+    // people to click yes. Named in the design and the README rather than
+    // pretended away; closing it needs a sandbox, not a rule.
     if (NPM_SAFE_SUBCOMMANDS.has(sub)) {
       return sub === "install" || sub === "i" || sub === "ci"
         ? allowed("Dulo wants to install the project's dependencies", command)

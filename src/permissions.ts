@@ -83,8 +83,16 @@ const UNREADABLE: RiskAssessment = {
 };
 
 /**
- * A gate scoped to one turn. `alwaysAllow` accumulates tool names the user has
- * waved through for the rest of that turn only, and only for `ask`.
+ * What "always" covers. Keying by tool name alone would mean one click on
+ * `shell` blessing every later shell command in the turn — including ones the
+ * person never saw. The description already encodes the binary and subcommand,
+ * so the shortcut applies to the same kind of action and nothing wider.
+ */
+const shortcutKey = (ask: PendingAsk): string => `${ask.tool}\u0000${ask.what}`;
+
+/**
+ * A gate scoped to one turn. `alwaysAllow` accumulates the kinds of action the
+ * user has waved through for the rest of that turn only, and only for `ask`.
  */
 export const createGate = (options: GateOptions): Gate => {
   const alwaysAllow = new Set<string>();
@@ -106,7 +114,7 @@ export const createGate = (options: GateOptions): Gate => {
     waiting.delete(id);
     // "always" is a shortcut for the rest of the turn, and a shortcut is
     // precisely what a confirm must not have.
-    if (decision === "always" && entry.ask.tier === "ask") alwaysAllow.add(entry.ask.tool);
+    if (decision === "always" && entry.ask.tier === "ask") alwaysAllow.add(shortcutKey(entry.ask));
     entry.settle(decision);
     options.onSettled(id, entry.ask.tool, decision);
     return true;
@@ -117,7 +125,7 @@ export const createGate = (options: GateOptions): Gate => {
       const risk = assess(ask);
       const pending: PendingAsk = { ...ask, ...risk };
 
-      if (risk.tier === "allowed" || (risk.tier === "ask" && alwaysAllow.has(ask.tool))) {
+      if (risk.tier === "allowed" || (risk.tier === "ask" && alwaysAllow.has(shortcutKey(pending)))) {
         options.onAuto?.(pending);
         return Promise.resolve(true);
       }

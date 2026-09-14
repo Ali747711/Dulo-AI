@@ -90,6 +90,47 @@ test('"always" silences later asks for that tool, in this turn only (AC-20)', as
   assert.deepEqual(h.asked, ["http_request", "dns_lookup"]);
 });
 
+test('"always" covers the kind of action approved, not everything the tool can do', async () => {
+  // One "always" on `shell` must not bless every future shell command: the
+  // gate keys the shortcut by what was actually approved.
+  const h = harness(() => "ask");
+  const approve = async (id: string, tool: string, what: string) => {
+    const pending = h.gate.request({ id, tool, args: { what } });
+    await answer(h, id, "always");
+    return pending;
+  };
+
+  // The classifier here distinguishes by args, as the real one does.
+  const gate = createGate({
+    classify: (tool, args) => ({
+      tier: "ask",
+      what: `Dulo wants to run ${String(args.command)}`,
+      where: String(args.command),
+      undo: "x",
+    }),
+    onAsk: (ask) => h.asked.push(ask.what),
+    onAuto: () => {},
+    onSettled: () => {},
+  });
+
+  const first = gate.request({ id: "k1", tool: "shell", args: { command: "node a.js" } });
+  for (let i = 0; i < 50 && gate.pending().length === 0; i++) await new Promise((r) => setTimeout(r, 2));
+  gate.resolve("k1", "always");
+  assert.equal(await first, true);
+
+  // The same command again: no prompt.
+  assert.equal(await gate.request({ id: "k2", tool: "shell", args: { command: "node a.js" } }), true);
+
+  // A different command through the same tool must still ask.
+  const different = gate.request({ id: "k3", tool: "shell", args: { command: "node b.js" } });
+  for (let i = 0; i < 50 && gate.pending().length === 0; i++) await new Promise((r) => setTimeout(r, 2));
+  assert.equal(gate.pending().length, 1, "a different command asks again");
+  gate.resolve("k3", "deny");
+  assert.equal(await different, false);
+
+  await approve("k9", "other", "unused").catch(() => {});
+});
+
 test("confirm asks every time, and no answer ever waves it through (INV-19)", async () => {
   const tiers: Record<string, RiskTier> = { deploy: "confirm", fetchit: "ask" };
   const h = harness((tool) => tiers[tool] ?? "ask");
