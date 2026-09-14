@@ -1,7 +1,6 @@
 // src/server.ts
 // HTTP API for the Dulo web client. Runs stream back as Server-Sent Events.
 import "./env.js";
-import { mkdir } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 
 import { FALLBACK_MODELS, MODEL } from "./llm.js";
@@ -9,7 +8,7 @@ import { closeRegistry, getRegistry, initRegistry } from "./registry.js";
 import { createRunner } from "./session/runner.js";
 import { handleSessionRoutes } from "./session/routes.js";
 import { FileSessionStore } from "./session/store/files.js";
-import { SESSIONS_DIR, WORKSPACE_ROOT } from "./paths.js";
+import { SESSIONS_DIR, WORKSPACE_ROOT, ensureWorkspace } from "./paths.js";
 import type { Tool } from "./types.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -114,7 +113,7 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 const start = async () => {
   try {
-    await mkdir(WORKSPACE_ROOT, { recursive: true });
+    await ensureWorkspace();
   } catch (error) {
     // The agent cannot work without somewhere to put its projects.
     console.error(

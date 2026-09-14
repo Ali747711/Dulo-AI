@@ -4,8 +4,9 @@ import path from "node:path";
 
 import type { Tool } from "../types.js";
 import { resolveSafe } from "./file.js";
+import { WORKSPACE_ROOT } from "../paths.js";
 
-const ROOT = process.cwd();
+const ROOT = WORKSPACE_ROOT;
 const IGNORED = new Set([
   "node_modules",
   ".git",

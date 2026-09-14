@@ -9,6 +9,7 @@
 //     config, .env) — always under HARNESS_ROOT, the checkout this file is in;
 //   - the harness's data (workspace, sessions) — under HARNESS_ROOT by default,
 //     each overridable with an env var so a scratch instance can be isolated.
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,3 +40,8 @@ export const AGENTS_DIR = path.join(HARNESS_ROOT, "src", "agents");
 export const SKILLS_DIR = path.join(HARNESS_ROOT, "src", "skills");
 export const CUSTOM_TOOLS_DIR = path.join(HARNESS_ROOT, "src", "tools", "custom");
 export const TEMPLATES_DIR = path.join(HARNESS_ROOT, "templates");
+
+/** Create the workspace if it is missing. Every entry point calls this before tools run. */
+export const ensureWorkspace = async (): Promise<void> => {
+  await mkdir(WORKSPACE_ROOT, { recursive: true });
+};

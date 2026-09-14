@@ -1,5 +1,5 @@
 // src/tools/file.ts
-import { readdir, readFile, writeFile, mkdir, realpath, stat } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { glob } from "node:fs/promises";
@@ -7,8 +7,10 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { createGzip, createGunzip, createDeflate, createInflate } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import type { Tool } from "../types.js";
+import { WORKSPACE_ROOT } from "../paths.js";
 
-const ROOT = process.cwd();
+// Every file tool is confined to the workspace, never to Dulo's own checkout.
+const ROOT = WORKSPACE_ROOT;
 const IGNORED = new Set(["node_modules", ".git", "dist", "build"]);
 
 /** Caps on read_file, so one oversized log cannot flood the context window. */
@@ -22,7 +24,7 @@ const MAX_READ_LINES = 2000;
 export const resolveSafe = async (relativePath: string): Promise<string> => {
   const resolved = path.resolve(ROOT, relativePath);
   if (resolved !== ROOT && !resolved.startsWith(ROOT + path.sep)) {
-    throw new Error(`Path "${relativePath}" is outside the project root`);
+    throw new Error(`Path "${relativePath}" is outside the workspace`);
   }
 
   // Follow symlinks on existing target or nearest existing ancestor directory
@@ -36,10 +38,10 @@ export const resolveSafe = async (relativePath: string): Promise<string> => {
     const real = await realpath(checkPath);
     const realRoot = await realpath(ROOT);
     if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
-      throw new Error(`Path "${relativePath}" resolves outside the project root via symlink`);
+      throw new Error(`Path "${relativePath}" resolves outside the workspace via symlink`);
     }
   } catch (error) {
-    if (error instanceof Error && error.message.includes("outside the project root")) {
+    if (error instanceof Error && error.message.includes("outside the workspace")) {
       throw error;
     }
   }
@@ -60,7 +62,7 @@ export const listFilesTool: Tool = {
     properties: {
       dir: {
         type: "string",
-        description: "Directory path relative to the project root",
+        description: "Directory path relative to the workspace root",
       },
     },
     required: ["dir"],
@@ -89,7 +91,7 @@ export const readFileTool: Tool = {
     properties: {
       path: {
         type: "string",
-        description: "File path relative to the project root",
+        description: "File path relative to the workspace root",
       },
       offset: {
         type: "number",
@@ -157,7 +159,7 @@ export const writeFileTool: Tool = {
     properties: {
       path: {
         type: "string",
-        description: "File path relative to the project root",
+        description: "File path relative to the workspace root",
       },
       content: { type: "string", description: "Full text content to write" },
     },
@@ -179,7 +181,7 @@ export const globTool: Tool = {
   name: "glob",
   description:
     "Find files matching a glob pattern (e.g., '**/*.ts', 'src/**/*.test.ts', '*.json'). " +
-    "Returns a list of matching file paths relative to the project root. " +
+    "Returns a list of matching file paths relative to the workspace root. " +
     "Supports standard glob patterns: *, **, ?, [...], {...}.",
   parameters: {
     type: "object",
@@ -333,6 +335,91 @@ export const fileExtractTool: Tool = {
   },
 };
 
+export const makeDirTool: Tool = {
+  name: "make_dir",
+  description: "Create a folder, and any missing parent folders, inside the workspace.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Folder path relative to the workspace root" },
+    },
+    required: ["path"],
+  },
+  execute: async ({ path: dirPath }: { path: string }) => {
+    try {
+      const target = await resolveSafe(dirPath);
+      await mkdir(target, { recursive: true });
+      return `Created folder ${dirPath}`;
+    } catch (error) {
+      return rethrow(error);
+    }
+  },
+};
+
+export const movePathTool: Tool = {
+  name: "move_path",
+  description:
+    "Move or rename a file or folder inside the workspace. Missing parent folders of the destination are created.",
+  parameters: {
+    type: "object",
+    properties: {
+      from: { type: "string", description: "Current path, relative to the workspace root" },
+      to: { type: "string", description: "New path, relative to the workspace root" },
+    },
+    required: ["from", "to"],
+  },
+  execute: async ({ from, to }: { from: string; to: string }) => {
+    try {
+      const source = await resolveSafe(from);
+      const target = await resolveSafe(to);
+      await mkdir(path.dirname(target), { recursive: true });
+      await rename(source, target);
+      return `Moved ${from} to ${to}`;
+    } catch (error) {
+      return rethrow(error);
+    }
+  },
+};
+
+export const removePathTool: Tool = {
+  name: "remove_path",
+  description:
+    "Delete a file, or a folder and its contents with recursive: true, inside the workspace. The workspace root itself is never removed.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path relative to the workspace root" },
+      recursive: {
+        type: "boolean",
+        description: "Required to delete a folder together with everything in it",
+      },
+    },
+    required: ["path"],
+  },
+  execute: async ({ path: target, recursive = false }: { path: string; recursive?: boolean }) => {
+    try {
+      const resolved = await resolveSafe(target || ".");
+      const [realTarget, realRoot] = await Promise.all([
+        realpath(resolved).catch(() => resolved),
+        realpath(ROOT),
+      ]);
+      if (resolved === ROOT || realTarget === realRoot) {
+        throw new Error("Refusing to remove the workspace root");
+      }
+      const info = await stat(resolved);
+      if (info.isDirectory() && !recursive) {
+        throw new Error(
+          `"${target}" is a folder; pass recursive: true to delete it and everything in it`,
+        );
+      }
+      await rm(resolved, { recursive, force: false });
+      return `Removed ${target}`;
+    } catch (error) {
+      return rethrow(error);
+    }
+  },
+};
+
 export const fileTools: Tool[] = [
   listFilesTool,
   readFileTool,
@@ -340,4 +427,7 @@ export const fileTools: Tool[] = [
   globTool,
   fileCompressTool,
   fileExtractTool,
+  makeDirTool,
+  movePathTool,
+  removePathTool,
 ];

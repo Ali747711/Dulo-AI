@@ -23,6 +23,9 @@ export const DEFAULT_GATED_TOOLS = [
   "file_compress",
   "file_extract",
   "http_request",
+  "make_dir",
+  "move_path",
+  "remove_path",
 ];
 
 export interface PermissionAsk {
