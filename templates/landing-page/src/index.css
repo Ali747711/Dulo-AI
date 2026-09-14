@@ -1,0 +1,50 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Everything visual starts here: replace these values with the
+ * palette and typefaces chosen for this brief, and use the utilities they
+ * generate (bg-surface, text-ink, font-display …) instead of ad hoc colors.
+ *
+ * Fonts are self-hosted: install the family, then import it above this block.
+ *   npm install @fontsource-variable/<family>
+ *   @import "@fontsource-variable/<family>";
+ */
+@theme {
+  --color-surface: #ffffff;
+  --color-surface-muted: #f5f5f4;
+  --color-ink: #1c1917;
+  --color-ink-muted: #57534e;
+  --color-accent: #1c1917;
+  --color-accent-ink: #ffffff;
+
+  --font-display: ui-serif, Georgia, serif;
+  --font-body: ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Motion is opt-in: anything animated must stop for people who ask it to. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

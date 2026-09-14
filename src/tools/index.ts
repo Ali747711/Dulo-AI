@@ -7,6 +7,7 @@ import { todoTools } from "./todo.js";
 import { systemTools } from "./system.js";
 import { networkTools } from "./network.js";
 import { utilityTools } from "./utility.js";
+import { scaffoldTools } from "./scaffold.js";
 
 export * from "./file.js";
 export * from "./edit.js";
@@ -15,6 +16,7 @@ export * from "./todo.js";
 export * from "./system.js";
 export * from "./network.js";
 export * from "./utility.js";
+export * from "./scaffold.js";
 
 /**
  * Tools compiled into the harness. The full set the agent sees comes from
@@ -28,4 +30,5 @@ export const builtinTools: Tool[] = [
   ...systemTools,
   ...networkTools,
   ...utilityTools,
+  ...scaffoldTools,
 ];

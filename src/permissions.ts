@@ -26,6 +26,7 @@ export const DEFAULT_GATED_TOOLS = [
   "make_dir",
   "move_path",
   "remove_path",
+  "scaffold_project",
 ];
 
 export interface PermissionAsk {
