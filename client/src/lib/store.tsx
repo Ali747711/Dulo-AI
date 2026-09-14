@@ -113,6 +113,10 @@ const applyEvent = (run: Run, event: RunEvent): Run => {
             step: event.step,
             tool: event.tool,
             args: event.args,
+            tier: event.tier,
+            what: event.what,
+            where: event.where,
+            undo: event.undo,
           },
         ],
       }

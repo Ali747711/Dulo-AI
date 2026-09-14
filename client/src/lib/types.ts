@@ -49,11 +49,20 @@ export type RunEndReason = "answered" | "step-limit"
 export type PermissionDecision = "allow" | "deny" | "always" | "timeout"
 
 /** A gated tool call waiting on the user before it runs. */
+/** Mirrors RiskTier in src/risk.ts. */
+export type RiskTier = "allowed" | "ask" | "confirm"
+
 export interface PendingPermission {
   id: string
   step: number
   tool: string
   args: Record<string, unknown>
+  /** "confirm" is asked every time and offers no blanket yes. */
+  tier?: RiskTier
+  /** Plain language, for someone who is not an engineer. */
+  what?: string
+  where?: string
+  undo?: string
 }
 
 /** Token counts summed over every model call in a run. */
@@ -151,6 +160,17 @@ export type RunEvent =
       id: string
       tool: string
       args: Record<string, unknown>
+      tier?: RiskTier
+      what?: string
+      where?: string
+      undo?: string
+    }
+  | {
+      type: "permission.auto"
+      step: number
+      tool: string
+      args: Record<string, unknown>
+      what?: string
     }
   | {
       type: "permission.resolved"

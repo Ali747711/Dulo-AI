@@ -2,6 +2,8 @@
 // Events emitted while an agent run is in progress. The Dulo web client
 // mirrors this type in client/src/lib/types.ts, keep the two in sync.
 
+import type { RiskTier } from "./risk.js";
+
 export type RunStatus = "completed" | "failed" | "cancelled";
 
 /**
@@ -60,6 +62,20 @@ export type RunEvent =
       id: string;
       tool: string;
       args: Record<string, unknown>;
+      /** How risky this is; "confirm" may never be waved through. */
+      tier?: RiskTier;
+      /** Plain language, for someone who is not an engineer. */
+      what?: string;
+      where?: string;
+      undo?: string;
+    }
+  /** A call that ran without asking, so the log records everything, not only prompts. */
+  | {
+      type: "permission.auto";
+      step: number;
+      tool: string;
+      args: Record<string, unknown>;
+      what?: string;
     }
   | {
       type: "permission.resolved";

@@ -1,7 +1,7 @@
 // client/src/lib/session-types.ts
 // Mirror of src/session/types.ts in the harness — keep the two in sync the way
 // types.ts mirrors src/events.ts. Plus the response shapes of the session API.
-import type { RunEvent, RunUsage } from "./types"
+import type { RiskTier, RunEvent, RunUsage } from "./types"
 
 /** Per-turn overrides. A session keeps the last used set as its defaults. */
 export interface TurnSettings {
@@ -133,6 +133,11 @@ export interface PendingToolPermission {
   step: number
   tool: string
   args: Record<string, unknown>
+  /** See PendingPermission in types.ts; both mirror src/permissions.ts. */
+  tier?: RiskTier
+  what?: string
+  where?: string
+  undo?: string
 }
 
 /** Body of GET /api/sessions/:id — mirrors Snapshot in src/session/runner.ts. */

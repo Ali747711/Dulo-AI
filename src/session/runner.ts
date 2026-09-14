@@ -9,6 +9,7 @@ import type { ServerResponse } from "node:http";
 import { resolveRunConfig, runTurn, type RunConfig } from "../agent.js";
 import type { PermissionDecision, RunEvent, RunResult } from "../events.js";
 import { createGate, type Gate } from "../permissions.js";
+import type { RiskTier } from "../risk.js";
 import { getAgent, getRegistry } from "../registry.js";
 import { applyToolPolicy } from "../agents.js";
 import { createLoopTools } from "../loop/report-done.js";
@@ -69,6 +70,11 @@ export interface Snapshot {
       step: number;
       tool: string;
       args: Record<string, unknown>;
+      /** Mirrors PendingToolPermission in client/src/lib/session-types.ts. */
+      tier?: RiskTier;
+      what?: string;
+      where?: string;
+      undo?: string;
     }[];
   };
 }
@@ -399,6 +405,13 @@ export const createRunner = (store: SessionStore): Runner => {
         onAsk: (ask) =>
           publish(entry, {
             type: "permission.ask", step: liveTurn.step, id: ask.id, tool: ask.tool, args: ask.args,
+            tier: ask.tier, what: ask.what, where: ask.where, undo: ask.undo,
+          }, turnId),
+        // Recorded, never prompted: the log should show everything that ran,
+        // not only the calls that happened to need an answer.
+        onAuto: (ask) =>
+          publish(entry, {
+            type: "permission.auto", step: liveTurn.step, tool: ask.tool, args: ask.args, what: ask.what,
           }, turnId),
         onSettled: (requestId, tool, decision) =>
           publish(entry, {
@@ -472,6 +485,10 @@ export const createRunner = (store: SessionStore): Runner => {
                   step: live.step,
                   tool: ask.tool,
                   args: ask.args,
+                  tier: ask.tier,
+                  what: ask.what,
+                  where: ask.where,
+                  undo: ask.undo,
                 })),
               },
             }
