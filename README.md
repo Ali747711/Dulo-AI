@@ -219,6 +219,26 @@ npm start -- "What time is it and how many files are in src?"
 | `DULO_CONFIG` | No | `dulo.config.json` in the checkout | Use a different config file |
 | `LLM_STALL_MS` | No | `90000` | Abort a model request that sends nothing for this long |
 | `LLM_TOTAL_MS` | No | `600000` | Abort a model request that lives longer than this |
+
+### What Dulo asks permission for
+
+Every tool call is judged from the tool **and its arguments**, so `npm run build` and
+`node deploy.js` are not treated the same. Three answers:
+
+| Tier | Examples | You are asked |
+| --- | --- | --- |
+| Runs | Reading; writing, moving, creating inside the workspace; install, build, lint; starting a preview | Never |
+| Asks | The internet; `node`, `npx`, `python`; tools from MCP servers Dulo has no rule for | Once, and you can allow it for the rest of the chat |
+| Confirms | Deploying, `git push`, writing to GitHub or a database, deleting a folder, a non-GET request | Every single time, with no "always" |
+
+Anything Dulo has no rule for is asked about, never run silently. Set
+`approval.mode` in `dulo.config.json` to `"tiers"` (the default), `"ask"` (the older
+name-only policy) or `"auto"` (no questions at all — for unattended runs you have
+decided to trust). `approval.allowTools` and `approval.confirmTools` override single
+tools by name; `confirmTools` wins.
+
+Known limit: `node` and `npx` run code the harness has not inspected, so they are
+asked about rather than blocked. There is no sandbox.
 | `PORT` | No | `3001` | Harness HTTP / SSE server port |
 | `DULO_CLIENT_ORIGIN` | No | `http://localhost:5173` | Allowed browser origin for CORS |
 | `DULO_SESSIONS_DIR` | No | `sessions/` under the working directory | Where conversations are stored. **A second harness started for testing must set this to a throwaway directory** — a different `PORT` does not isolate data, so two instances started from the same checkout otherwise share one folder |

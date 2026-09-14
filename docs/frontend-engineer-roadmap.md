@@ -97,7 +97,7 @@ template proven by `npm run template:check`, 97 tests green.
 
 ---
 
-## Step 3 — Trust boundary: tiers, popup, secrets
+## Step 3 — Trust boundary: tiers, popup, secrets — BUILT 2026-09-14
 
 **Goal.** The normal workflow (local build and preview inside the workspace) runs
 without interruptions. External writes, deploys, and anything hard to undo stop for
@@ -119,6 +119,11 @@ a permission popup a non-technical user can read and decide on. No secrets in co
 
 **Done when.** A full test-brief run needs zero prompts for local work and exactly one
 prompt per external-write action; the token is out of the config file.
+
+**Built:** design `docs/trust-boundary-design.md`, plan `docs/trust-boundary-plan.md`,
+commits `e2f8d4c`…`c0ab08a`. `src/risk.ts` classifies from the arguments; the gate asks
+by tier and refuses to record "always" for a confirm; the prompt is plain language with
+the details behind a disclosure; the GitHub token now lives in `.env`.
 
 ---
 

@@ -1,6 +1,7 @@
 # Trust boundary: which actions run, which ones wait for a person
 
-> **Status:** Proposed for review. Roadmap Step 3. Owner: Ali. Author: Claude. 2026-09-14.
+> **Status:** Approved and implemented 2026-09-14 (roadmap Step 3).
+> Owner: Ali. Author: Claude. Plan: `trust-boundary-plan.md`.
 
 ## 1. Executive summary
 
