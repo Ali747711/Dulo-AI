@@ -9,6 +9,7 @@ import { createRunner } from "./session/runner.js";
 import { handleSessionRoutes } from "./session/routes.js";
 import { FileSessionStore } from "./session/store/files.js";
 import { SESSIONS_DIR, WORKSPACE_ROOT, ensureWorkspace } from "./paths.js";
+import { stopAllDevServers } from "./tools/dev-server.js";
 import type { Tool } from "./types.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -103,7 +104,8 @@ const server = createServer((req, res) => {
 // stdio MCP servers are child processes; without this they outlive the harness.
 const shutdown = (signal: string) => {
   console.log(`\n[dulo] ${signal}, shutting down`);
-  void closeRegistry().finally(() => {
+  // Dev servers are child processes this harness started; they must not outlive it.
+  void Promise.all([stopAllDevServers(), closeRegistry()]).finally(() => {
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();
   });
