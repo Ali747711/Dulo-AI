@@ -4,10 +4,11 @@
 // Dulo is one repo for one developer, so there is no second project for a
 // global tier to serve.
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { z } from "zod";
 
-export const CONFIG_FILE = path.join(process.cwd(), "dulo.config.json");
+import { CONFIG_FILE } from "./paths.js";
+
+export { CONFIG_FILE };
 
 const McpServer = z
   .object({

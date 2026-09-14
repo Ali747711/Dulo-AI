@@ -5,8 +5,9 @@
 // every API call.
 import type { Tool } from "./types.js";
 import { loadMarkdownDir } from "./markdown.js";
+import { AGENTS_DIR } from "./paths.js";
 
-export const AGENTS_DIR = "src/agents";
+export { AGENTS_DIR };
 
 export interface AgentProfile {
   name: string;

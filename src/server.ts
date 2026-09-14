@@ -1,6 +1,7 @@
 // src/server.ts
 // HTTP API for the Dulo web client. Runs stream back as Server-Sent Events.
-import "dotenv/config";
+import "./env.js";
+import { mkdir } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 
 import { FALLBACK_MODELS, MODEL } from "./llm.js";
@@ -8,20 +9,17 @@ import { closeRegistry, getRegistry, initRegistry } from "./registry.js";
 import { createRunner } from "./session/runner.js";
 import { handleSessionRoutes } from "./session/routes.js";
 import { FileSessionStore } from "./session/store/files.js";
+import { SESSIONS_DIR, WORKSPACE_ROOT } from "./paths.js";
 import type { Tool } from "./types.js";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const CLIENT_ORIGIN = process.env.DULO_CLIENT_ORIGIN ?? "http://localhost:5173";
-/**
- * Where session data lives. Unset = `sessions/` under the working directory,
- * which is what a normal run uses. A second harness started for testing MUST
- * set this: PORT alone does not isolate anything, because the store's default
- * root is derived from cwd, so two instances started from the same checkout
- * share one directory — and a scratch instance's "clean up the sessions I
- * made" step then deletes the real instance's conversations too. That is not
- * hypothetical: it destroyed this project's own session history once.
- */
-const SESSIONS_DIR = process.env.DULO_SESSIONS_DIR;
+// Where session data and the agent's workspace live: src/paths.ts, from
+// DULO_SESSIONS_DIR / DULO_WORKSPACE_DIR, else under the checkout. A second
+// harness started for testing MUST set both: PORT alone isolates nothing, so
+// two instances otherwise share one directory — and a scratch instance's
+// "clean up what I made" step then deletes the real instance's data too. That
+// is not hypothetical: it destroyed this project's own session history once.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": CLIENT_ORIGIN,
@@ -115,6 +113,17 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 const start = async () => {
+  try {
+    await mkdir(WORKSPACE_ROOT, { recursive: true });
+  } catch (error) {
+    // The agent cannot work without somewhere to put its projects.
+    console.error(
+      `[dulo] cannot create the workspace ${WORKSPACE_ROOT}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    process.exit(1);
+  }
   await initRegistry();
   await runner.recover();
   server.listen(PORT, () => {
@@ -122,7 +131,8 @@ const start = async () => {
     console.log(`Allowing browser origin ${CLIENT_ORIGIN}`);
     // Printed on every start so a second instance pointed at the real data
     // directory is obvious before it writes anything, not after.
-    console.log(`Sessions stored in ${SESSIONS_DIR ?? "sessions/ (default)"}`);
+    console.log(`Sessions stored in ${SESSIONS_DIR}`);
+    console.log(`Workspace: ${WORKSPACE_ROOT}`);
     if (!process.env.OPENROUTER_API_KEY) {
       console.warn("Warning: OPENROUTER_API_KEY is not set, runs will fail");
     }

@@ -5,8 +5,9 @@
 // every request.
 import type { Tool } from "./types.js";
 import { loadMarkdownDir, type MarkdownDoc } from "./markdown.js";
+import { SKILLS_DIR } from "./paths.js";
 
-export const SKILLS_DIR = "src/skills";
+export { SKILLS_DIR };
 
 export interface Skill {
   name: string;

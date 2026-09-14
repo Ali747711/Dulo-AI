@@ -1,6 +1,6 @@
 // src/index.ts
 // CLI entry point. The web client uses src/server.ts instead.
-import "dotenv/config";
+import "./env.js";
 
 import { runAgent } from "./agent.js";
 import { closeRegistry, getRegistry, initRegistry } from "./registry.js";

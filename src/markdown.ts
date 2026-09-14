@@ -21,7 +21,7 @@ export interface MarkdownDoc {
  * rather than stopping the harness from starting.
  */
 export const loadMarkdownDir = async (dir: string): Promise<MarkdownDoc[]> => {
-  const full = path.join(process.cwd(), dir);
+  const full = path.resolve(dir);
   let entries: string[];
   try {
     entries = (await readdir(full)).filter((f) => f.endsWith(".md"));

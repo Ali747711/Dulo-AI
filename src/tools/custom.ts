@@ -10,7 +10,9 @@ import { pathToFileURL } from "node:url";
 
 import type { Tool } from "../types.js";
 
-export const CUSTOM_TOOLS_DIR = "src/tools/custom";
+import { CUSTOM_TOOLS_DIR } from "../paths.js";
+
+export { CUSTOM_TOOLS_DIR };
 
 const LOADABLE = /\.(ts|mts|js|mjs)$/;
 
@@ -33,7 +35,7 @@ const isTool = (value: unknown): value is Tool => {
  * the whole agent unavailable.
  */
 export const loadCustomTools = async (): Promise<Tool[]> => {
-  const dir = path.join(process.cwd(), CUSTOM_TOOLS_DIR);
+  const dir = CUSTOM_TOOLS_DIR;
   let entries: string[];
   try {
     entries = (await readdir(dir)).filter(

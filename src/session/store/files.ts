@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { SESSIONS_DIR } from "../../paths.js";
+
 import type { SessionStore, StoredFile } from "../store.js";
 import type {
   ChatMessage,
@@ -43,7 +45,7 @@ export class FileSessionStore implements SessionStore {
   private readonly chains = new Map<string, Promise<void>>();
   private indexChain: Promise<void> = Promise.resolve();
 
-  constructor(private readonly root = path.join(process.cwd(), "sessions")) {}
+  constructor(private readonly root = SESSIONS_DIR) {}
 
   private dir(id: string): string {
     return path.join(this.root, id);
