@@ -65,6 +65,8 @@ export interface LoopToolDeps {
   getProfile?: (name: string) => AgentProfile | undefined;
   /** The tool set the reviewer picks from. Defaults to the live registry. */
   availableTools?: () => Tool[];
+  /** The skills catalogue appended to the reviewer's prompt. Defaults to the registry's. */
+  skillsPrompt?: () => string;
 }
 
 const checklistProblems = (claim: z.infer<typeof DoneClaim>): string[] => {
@@ -160,6 +162,7 @@ export const createLoopTools = (deps: LoopToolDeps): Tool[] => {
 
   const getProfile = deps.getProfile ?? getAgent;
   const availableTools = deps.availableTools ?? (() => getRegistry().tools);
+  const skillsPrompt = deps.skillsPrompt ?? (() => getRegistry().skillsPrompt);
 
   const runReview = async (
     claim: z.infer<typeof DoneClaim>,
@@ -178,7 +181,13 @@ export const createLoopTools = (deps: LoopToolDeps): Tool[] => {
 
     let result: { status: string; error?: string };
     try {
-      result = await deps.runTurn([{ role: "user", content: reviewRequest(claim, brief) }], {
+      // runTurn takes an already-built history: the system message is the
+      // caller's job. Without this the reviewer would run with no role at all.
+      const history: Message[] = [
+        { role: "system", content: profile.prompt + skillsPrompt() },
+        { role: "user", content: reviewRequest(claim, brief) },
+      ];
+      result = await deps.runTurn(history, {
         agent: loop.reviewer,
         tools: applyToolPolicy(tools, profile.tools),
         signal: deps.signal,

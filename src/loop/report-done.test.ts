@@ -49,8 +49,10 @@ const reviewerThatSays = (
   const seen: RunOptions[] = [];
   return {
     seen,
-    runTurn: async (_history, options) => {
+    runTurn: async (history, options) => {
       seen.push(options);
+      assert.equal(history[0]?.role, "system", "the reviewer runs with its own role prompt");
+      assert.match(String(history[0]?.content), /review it/);
       const tool = (options.tools ?? []).find((t: Tool) => t.name === "review_verdict");
       assert.ok(tool, "the nested run is given review_verdict");
       await tool.execute({ verdict, findings });
