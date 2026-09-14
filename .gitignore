@@ -37,3 +37,8 @@ runs/
 
 # Per-session data written by src/session/store/files.ts
 sessions/
+
+# Frontend Engineer working files: the brief/checklist per project (loop-engineering-design.md)
+# and generated projects (roadmap Step 2). Neither belongs in this repo.
+.dulo/
+workspace/
