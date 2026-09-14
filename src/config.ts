@@ -27,13 +27,20 @@ const McpServer = z
 
 const Approval = z.object({
   /**
-   * "ask" pauses a gated tool until a human answers. "auto" runs everything
-   * unasked, which is how Dulo behaved before the gate existed.
+   * "tiers" judges each call from the tool and its arguments (src/risk.ts):
+   * ordinary work inside the workspace runs, anything reaching outside asks,
+   * anything that cannot be undone asks every time. "ask" is the older flat
+   * name-based policy. "auto" runs everything unasked, which is how Dulo
+   * behaved before the gate existed — deliberate, for unattended runs only.
    */
-  mode: z.enum(["ask", "auto"]).default("ask"),
-  /** Tool names that need approval. Omit to use the built-in list. */
+  mode: z.enum(["tiers", "ask", "auto"]).default("tiers"),
+  /** Tool names that need approval under "ask". Omit to use the built-in list. */
   tools: z.array(z.string()).optional(),
-  /** Also gate every tool coming from an MCP server. They are unsandboxed. */
+  /** Under "tiers": names forced to run unasked. */
+  allowTools: z.array(z.string()).default([]),
+  /** Under "tiers": names forced to ask every time. Wins over allowTools. */
+  confirmTools: z.array(z.string()).default([]),
+  /** Under "ask": also gate every tool coming from an MCP server. */
   gateMcpTools: z.boolean().default(true),
 });
 
@@ -49,7 +56,12 @@ const Loop = z.object({
 const ConfigSchema = z.object({
   /** Tool names to leave out of the registry entirely. */
   disabledTools: z.array(z.string()).default([]),
-  approval: Approval.default({ mode: "ask", gateMcpTools: true }),
+  approval: Approval.default({
+    mode: "tiers",
+    allowTools: [],
+    confirmTools: [],
+    gateMcpTools: true,
+  }),
   loop: Loop.default({ maxIterations: 3, independentReview: true, reviewer: "frontend-reviewer" }),
   mcpServers: z.record(z.string(), McpServer).default({}),
 });
@@ -62,7 +74,7 @@ export type LoopConfig = z.infer<typeof Loop>;
 
 export const DEFAULT_CONFIG: DuloConfig = {
   disabledTools: [],
-  approval: { mode: "ask", gateMcpTools: true },
+  approval: { mode: "tiers", allowTools: [], confirmTools: [], gateMcpTools: true },
   loop: { maxIterations: 3, independentReview: true, reviewer: "frontend-reviewer" },
   mcpServers: {},
 };

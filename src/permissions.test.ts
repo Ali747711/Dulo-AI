@@ -166,3 +166,49 @@ test("resolving an unknown or already-settled id says so", async () => {
   await pending;
   assert.equal(h.gate.resolve("g1", "allow"), false, "settled once only");
 });
+
+test("the three approval modes map to the right questions (AC-22)", async () => {
+  const { classifierFor } = await import("./registry.js");
+  const { DEFAULT_GATED_TOOLS: gated } = await import("./permissions.js");
+
+  const tiersOf = (approval: Parameters<typeof classifierFor>[0]) => {
+    const classify = classifierFor(approval, gated);
+    return {
+      build: classify("shell", { command: "npm run build" }).tier,
+      code: classify("shell", { command: "node x.js" }).tier,
+      write: classify("write_file", { path: "a.txt" }).tier,
+      del: classify("remove_path", { path: "src", recursive: true }).tier,
+      read: classify("read_file", { path: "a.txt" }).tier,
+    };
+  };
+
+  const base = { allowTools: [], confirmTools: [], gateMcpTools: true };
+
+  assert.deepEqual(
+    tiersOf({ ...base, mode: "tiers" }),
+    { build: "allowed", code: "ask", write: "allowed", del: "confirm", read: "allowed" },
+    "tiers judges the arguments",
+  );
+
+  assert.deepEqual(
+    tiersOf({ ...base, mode: "ask" }),
+    { build: "ask", code: "ask", write: "ask", del: "ask", read: "allowed" },
+    "ask is the older flat policy: every gated name asks, nothing confirms",
+  );
+
+  assert.deepEqual(
+    tiersOf({ ...base, mode: "auto" }),
+    { build: "allowed", code: "allowed", write: "allowed", del: "allowed", read: "allowed" },
+    "auto asks nothing at all",
+  );
+
+  assert.deepEqual(
+    tiersOf({ ...base, mode: "tiers", confirmTools: ["write_file"], allowTools: ["dns_lookup"] }),
+    { build: "allowed", code: "ask", write: "confirm", del: "confirm", read: "allowed" },
+    "overrides reach the gate through the registry too",
+  );
+  assert.equal(
+    classifierFor({ ...base, mode: "tiers", allowTools: ["dns_lookup"] }, gated)("dns_lookup", {}).tier,
+    "allowed",
+  );
+});

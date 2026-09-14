@@ -8,7 +8,7 @@ import type { ServerResponse } from "node:http";
 
 import { resolveRunConfig, runTurn, type RunConfig } from "../agent.js";
 import type { PermissionDecision, RunEvent, RunResult } from "../events.js";
-import { createGate, flatClassifier, type Gate } from "../permissions.js";
+import { createGate, type Gate } from "../permissions.js";
 import { getAgent, getRegistry } from "../registry.js";
 import { applyToolPolicy } from "../agents.js";
 import { createLoopTools } from "../loop/report-done.js";
@@ -395,7 +395,7 @@ export const createRunner = (store: SessionStore): Runner => {
       controller,
       step: 0,
       gate: createGate({
-        classify: flatClassifier(getRegistry().gatedTools),
+        classify: (tool, args) => getRegistry().classify(tool, args),
         onAsk: (ask) =>
           publish(entry, {
             type: "permission.ask", step: liveTurn.step, id: ask.id, tool: ask.tool, args: ask.args,

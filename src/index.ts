@@ -59,7 +59,8 @@ async function main() {
     : null;
 
   const gate = createGate({
-    classify: flatClassifier(interactive ? registry.gatedTools : []),
+    // Non-interactive means nobody can answer, so nothing may be asked.
+    classify: interactive ? registry.classify : flatClassifier([]),
     onAsk: () => {},
     onSettled: () => {},
   });

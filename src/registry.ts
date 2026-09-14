@@ -4,9 +4,10 @@
 // catalogue, and named agent profiles. The agent loop never learns where a tool
 // came from — it still just iterates a Tool[].
 import { loadAgents, type AgentProfile } from "./agents.js";
-import { loadConfig, type DuloConfig, DEFAULT_CONFIG } from "./config.js";
+import { loadConfig, type ApprovalConfig, type DuloConfig, DEFAULT_CONFIG } from "./config.js";
 import { loadMcpTools, type McpRegistry } from "./mcp.js";
-import { DEFAULT_GATED_TOOLS } from "./permissions.js";
+import { DEFAULT_GATED_TOOLS, flatClassifier } from "./permissions.js";
+import { classify, type RiskAssessment } from "./risk.js";
 import { createSkillTool, describeSkills, loadSkills, type Skill } from "./skills.js";
 import { builtinTools } from "./tools/index.js";
 import { loadCustomTools } from "./tools/custom.js";
@@ -14,8 +15,13 @@ import type { Tool } from "./types.js";
 
 export interface Registry {
   tools: Tool[];
-  /** Tool names the permission gate should stop on, resolved from config. */
+  /** Tool names the permission gate should stop on under `mode: "ask"`. */
   gatedTools: string[];
+  /**
+   * What a tool call would do, resolved from `approval.mode`. The gate asks
+   * this and nothing else, so the mode lives in one place.
+   */
+  classify: (tool: string, args: Record<string, unknown>) => RiskAssessment;
   skills: Skill[];
   agents: AgentProfile[];
   config: DuloConfig;
@@ -27,6 +33,7 @@ export interface Registry {
 const EMPTY: Registry = {
   tools: builtinTools,
   gatedTools: DEFAULT_GATED_TOOLS,
+  classify: (tool, args) => classify(tool, args),
   skills: [],
   agents: [],
   config: DEFAULT_CONFIG,
@@ -52,6 +59,20 @@ const dedupe = (tools: Tool[]): Tool[] => {
     seen.set(tool.name, tool);
   }
   return [...seen.values()];
+};
+
+/**
+ * Turn `approval.mode` into the one question the gate asks. Keeping this here
+ * means the modes are defined in a single place instead of at each gate.
+ */
+export const classifierFor = (
+  approval: ApprovalConfig,
+  gatedTools: string[],
+): ((tool: string, args: Record<string, unknown>) => RiskAssessment) => {
+  if (approval.mode === "auto") return flatClassifier([]);
+  if (approval.mode === "ask") return flatClassifier(gatedTools);
+  const policy = { allowTools: approval.allowTools, confirmTools: approval.confirmTools };
+  return (tool, args) => classify(tool, args, policy);
 };
 
 /**
@@ -105,6 +126,7 @@ export const initRegistry = async (): Promise<Registry> => {
   current = {
     tools,
     gatedTools,
+    classify: classifierFor(config.approval, gatedTools),
     skills,
     agents,
     config,
