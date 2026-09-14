@@ -37,10 +37,20 @@ const Approval = z.object({
   gateMcpTools: z.boolean().default(true),
 });
 
+const Loop = z.object({
+  /** How many rejected done-claims a single turn may make before it must stop. */
+  maxIterations: z.number().int().positive().max(10).default(3),
+  /** Run a second role over the finished work before accepting a done claim. */
+  independentReview: z.boolean().default(true),
+  /** Which agent profile reviews. */
+  reviewer: z.string().min(1).default("frontend-reviewer"),
+});
+
 const ConfigSchema = z.object({
   /** Tool names to leave out of the registry entirely. */
   disabledTools: z.array(z.string()).default([]),
   approval: Approval.default({ mode: "ask", gateMcpTools: true }),
+  loop: Loop.default({ maxIterations: 3, independentReview: true, reviewer: "frontend-reviewer" }),
   mcpServers: z.record(z.string(), McpServer).default({}),
 });
 
@@ -48,10 +58,12 @@ export type McpServerConfig = z.infer<typeof McpServer>;
 export type DuloConfig = z.infer<typeof ConfigSchema>;
 
 export type ApprovalConfig = z.infer<typeof Approval>;
+export type LoopConfig = z.infer<typeof Loop>;
 
 export const DEFAULT_CONFIG: DuloConfig = {
   disabledTools: [],
   approval: { mode: "ask", gateMcpTools: true },
+  loop: { maxIterations: 3, independentReview: true, reviewer: "frontend-reviewer" },
   mcpServers: {},
 };
 

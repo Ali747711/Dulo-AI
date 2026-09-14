@@ -9,7 +9,9 @@ import type { ServerResponse } from "node:http";
 import { resolveRunConfig, runTurn, type RunConfig } from "../agent.js";
 import type { PermissionDecision, RunEvent, RunResult } from "../events.js";
 import { createGate, type Gate } from "../permissions.js";
-import { getRegistry } from "../registry.js";
+import { getAgent, getRegistry } from "../registry.js";
+import { applyToolPolicy } from "../agents.js";
+import { createLoopTools } from "../loop/report-done.js";
 import type { Tool } from "../types.js";
 import { fillDangling, foldTurnEvent } from "./fold.js";
 import { projectHistory } from "./history.js";
@@ -238,10 +240,24 @@ export const createRunner = (store: SessionStore): Runner => {
       attachments: new Map(), // attachments are inlined from Plan 5 onwards
     });
 
+    // The done gate is built per turn: it runs the reviewer inside this turn,
+    // so it needs this turn's signal and permission function. The profile's own
+    // tool policy still decides whether a role may claim done at all.
+    const profile = config.agent ? getAgent(config.agent) : undefined;
+    const loopTools = applyToolPolicy(
+      createLoopTools({
+        loop: getRegistry().config.loop,
+        signal: controller.signal,
+        requestPermission: (call) => gate.request(call),
+        runTurn,
+      }),
+      profile?.tools,
+    );
+
     let result: RunResult;
     try {
       result = await runTurn(history, {
-        tools,
+        tools: [...tools, ...loopTools],
         model: config.model,
         temperature: config.temperature,
         maxSteps: config.maxSteps,
