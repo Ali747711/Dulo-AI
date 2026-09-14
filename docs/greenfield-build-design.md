@@ -1,6 +1,7 @@
 # Greenfield build: from an agreed plan to a project the user can run
 
-> **Status:** Proposed for review. Roadmap Step 2. Owner: Ali. Author: Claude. 2026-09-14.
+> **Status:** Approved and implemented 2026-09-14 (roadmap Step 2, tasks 1-7).
+> Owner: Ali. Author: Claude. Plan: `greenfield-build-plan.md`.
 
 ## 1. Executive summary
 

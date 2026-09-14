@@ -44,7 +44,7 @@ engineer talking to a non-engineer. Building is not judged yet — that is Step 
 
 ---
 
-## Step 2 — Greenfield build: from brief to a ready-to-run project
+## Step 2 — Greenfield build: from brief to a ready-to-run project — BUILT 2026-09-14
 
 **Goal.** The role turns an agreed plan into a new project outside the Dulo repo,
 installs it, runs it, looks at it in a real browser, checks it against the brief and
@@ -87,9 +87,13 @@ immediately. No deployment.
   04-brief-and-stack.md`, dated, so the profile never carries version numbers.
 - Only the skills this needs (`src/skills/`), added because a task needs them.
 
-**Done when.** The Step 1 briefs produce projects that run with `npm install && npm run
-dev`, pass the definition of done, and the owner agrees the design quality on a
+**Done when.** The Step 1 briefs produce projects that run with `npm install` then the
+dev script, pass the definition of done, and the owner agrees the design quality on a
 sample is production-ready, not a prototype.
+
+**Built:** design `docs/greenfield-build-design.md`, plan `docs/greenfield-build-plan.md`,
+seven commits `9fd9747`…`8700f6b` plus `87159b5`. All four harness gaps closed, the
+template proven by `npm run template:check`, 97 tests green.
 
 ---
 
