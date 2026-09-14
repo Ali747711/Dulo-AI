@@ -4,7 +4,7 @@ import "./env.js";
 
 import { runAgent } from "./agent.js";
 import { closeRegistry, getRegistry, initRegistry } from "./registry.js";
-import { createGate } from "./permissions.js";
+import { createGate, flatClassifier } from "./permissions.js";
 import { ensureWorkspace } from "./paths.js";
 import { createInterface } from "node:readline/promises";
 import type { RunEvent } from "./events.js";
@@ -59,7 +59,7 @@ async function main() {
     : null;
 
   const gate = createGate({
-    gated: interactive ? registry.gatedTools : [],
+    classify: flatClassifier(interactive ? registry.gatedTools : []),
     onAsk: () => {},
     onSettled: () => {},
   });
