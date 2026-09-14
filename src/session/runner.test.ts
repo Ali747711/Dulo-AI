@@ -334,10 +334,11 @@ describe("runner", () => {
   });
 
   it("reports pending permissions in the snapshot while a gated tool waits", async () => {
-    // "shell" is in DEFAULT_GATED_TOOLS, so the loop parks on the gate.
+    // Under the tier policy the command decides, not the tool name: `echo` is a
+    // read and runs unasked, while `node` runs code the harness has not seen.
     const gated = await startStubLlm((_req, i) =>
       i === 0
-        ? { toolCall: { name: "shell", args: { command: "echo hi" } } }
+        ? { toolCall: { name: "shell", args: { command: "node script.js" } } }
         : { text: "done" },
     );
     useStubLlm(gated);
