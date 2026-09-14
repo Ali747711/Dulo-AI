@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
@@ -428,5 +429,37 @@ describe("runner", () => {
       assert.equal(await runner.removeQueueItem("ghost-session", "x"), false);
       assert.equal(await runner.sendQueueItem("ghost-session", "x"), null);
     });
+  });
+});
+
+describe("runner, stalled provider", () => {
+  it("ends the turn failed when the model stream stalls, instead of hanging (AC-10)", async () => {
+    // Accepts the request, sends headers, then never a byte.
+    const silent = createServer((req, res) => {
+      req.on("data", () => {});
+      req.on("end", () => res.writeHead(200, { "content-type": "text/event-stream" }));
+    });
+    await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
+    const { port } = silent.address() as { port: number };
+    const previousUrl = process.env.OPENROUTER_URL;
+    process.env.OPENROUTER_URL = `http://127.0.0.1:${port}/v1/chat/completions`;
+    process.env.LLM_STALL_MS = "100";
+    try {
+      const session = await runner.createSession();
+      const started = await runner.startTurn(session.id, { parts: text("hello") });
+      assert.ok(started && started.started);
+      await runner.awaitIdle(session.id);
+      const snap = await runner.getSnapshot(session.id);
+      const turn = snap?.turns.at(-1);
+      assert.equal(turn?.status, "failed");
+      assert.match(turn?.error ?? "", /stalled/i);
+      assert.equal(snap?.session.status, "idle");
+    } finally {
+      delete process.env.LLM_STALL_MS;
+      if (previousUrl) process.env.OPENROUTER_URL = previousUrl;
+      else delete process.env.OPENROUTER_URL;
+      silent.closeAllConnections();
+      await new Promise<void>((resolve) => silent.close(() => resolve()));
+    }
   });
 });

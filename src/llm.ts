@@ -21,6 +21,71 @@ const BASE_BACKOFF_MS = 500;
 const MAX_BACKOFF_MS = 10_000;
 
 /**
+ * Bounds on one request. A provider can accept the connection and then send
+ * nothing, and fetch will wait forever; the turn then hangs until someone
+ * cancels it (this happened for 28 minutes on the first real Frontend Engineer
+ * run). Both bounds fire as a retryable network failure, so the normal attempt
+ * loop treats them exactly like a dropped socket.
+ */
+const DEFAULT_STALL_MS = 90_000;
+const DEFAULT_TOTAL_MS = 600_000;
+
+const positiveEnv = (name: string, fallback: number): number => {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+};
+/** Longest silence tolerated before the first byte or between chunks. */
+export const stallMs = (): number => positiveEnv("LLM_STALL_MS", DEFAULT_STALL_MS);
+/** Longest a single request may live, bytes or not. */
+export const totalMs = (): number => positiveEnv("LLM_TOTAL_MS", DEFAULT_TOTAL_MS);
+
+type Bound = "stall" | "total";
+
+/** Aborts `controller` on silence or on the total bound; `touch()` on every byte. */
+const watchRequest = (controller: AbortController) => {
+  const stall = stallMs();
+  const total = totalMs();
+  let fired: Bound | undefined;
+  const fire = (why: Bound) => {
+    if (fired) return;
+    fired = why;
+    controller.abort();
+  };
+  const arm = (): NodeJS.Timeout => {
+    const t = setTimeout(() => fire("stall"), stall);
+    t.unref();
+    return t;
+  };
+  const totalTimer = setTimeout(() => fire("total"), total);
+  totalTimer.unref();
+  let stallTimer = arm();
+  return {
+    touch(): void {
+      clearTimeout(stallTimer);
+      stallTimer = arm();
+    },
+    stop(): void {
+      clearTimeout(stallTimer);
+      clearTimeout(totalTimer);
+    },
+    get fired(): Bound | undefined {
+      return fired;
+    },
+    error(): LlmError {
+      return fired === "total"
+        ? new LlmError(
+            `Model request exceeded ${Math.round(total / 1000)} s and was aborted`,
+            { kind: "network", retryable: true },
+          )
+        : new LlmError(
+            `Model stream stalled: no data for ${Math.round(stall / 1000)} s`,
+            { kind: "network", retryable: true },
+          );
+    },
+  };
+};
+
+/**
  * Why a call failed. `retryable` says whether trying the identical request
  * again could plausibly work — resending a request the provider rejected on its
  * merits only wastes the user's wall-clock time and quota.
@@ -235,6 +300,7 @@ class ToolCallAccumulator {
 async function readStream(
   body: ReadableStream<Uint8Array>,
   onDelta?: (text: string) => void,
+  onChunk?: () => void,
 ): Promise<CallResult & { emitted: boolean }> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -248,6 +314,7 @@ async function readStream(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      onChunk?.();
       buffer += decoder.decode(value, { stream: true });
 
       // Events are separated by a blank line; keep any partial tail for later.
@@ -350,6 +417,21 @@ export async function callLLM(
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     let emitted = false;
+    // One controller per attempt: the watchdog aborts only its own request,
+    // and the caller's signal still cancels everything.
+    const attemptController = new AbortController();
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, attemptController.signal])
+      : attemptController.signal;
+    const watch = watchRequest(attemptController);
+    // Text that reached the client must not be re-sent by a retry, whatever
+    // ends the stream afterwards.
+    const onDelta = options.onDelta
+      ? (text: string) => {
+          emitted = true;
+          options.onDelta!(text);
+        }
+      : undefined;
     try {
       let res: Response;
       try {
@@ -362,10 +444,11 @@ export async function callLLM(
             "X-Title": "Dulo", // optional
           },
           body: JSON.stringify(body),
-          signal: options.signal,
+          signal,
         });
       } catch (error) {
         if (options.signal?.aborted) throw error;
+        if (watch.fired) throw watch.error();
         // A socket-level failure never reached the model; safe to resend.
         throw new LlmError(
           `Could not reach OpenRouter: ${error instanceof Error ? error.message : String(error)}`,
@@ -388,12 +471,25 @@ export async function callLLM(
         });
       }
 
+      watch.touch(); // headers arrived
       const contentType = res.headers.get("content-type") ?? "";
       if (!contentType.includes("text/event-stream") || !res.body) {
-        return readJson(await res.json());
+        try {
+          return readJson(await res.json());
+        } catch (error) {
+          if (!options.signal?.aborted && watch.fired) throw watch.error();
+          throw error;
+        }
       }
-      const result = await readStream(res.body, options.onDelta);
-      emitted = result.emitted;
+      let result: Awaited<ReturnType<typeof readStream>>;
+      try {
+        result = await readStream(res.body, onDelta, () => watch.touch());
+      } catch (error) {
+        if (options.signal?.aborted) throw error;
+        if (watch.fired) throw watch.error();
+        throw error;
+      }
+      emitted = emitted || result.emitted;
       return { message: result.message, usage: result.usage };
     } catch (error) {
       lastError = error;
@@ -403,6 +499,8 @@ export async function callLLM(
       // UI; a partial answer is better than a duplicated one.
       if (!retryable || last || emitted || options.signal?.aborted) throw error;
       await sleep(backoffFor(attempt, error.retryAfterMs), options.signal);
+    } finally {
+      watch.stop();
     }
   }
 
