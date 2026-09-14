@@ -23,15 +23,15 @@ to look closer and to say, in words, whether the choice was deliberate for this 
    The `shell` tool runs one allow-listed program with its arguments: no `&&`, pipes,
    redirection, or background jobs, and it stops the command after 30 seconds. Run
    one command per call.
-2. Dev server: a running server needs a tool that keeps a process alive. Use the
-   dev-server tool when one is listed (it starts the server, gives you the URL, and
-   stops it). If none is listed, DOD-5 cannot be proven: record it as fail with the
-   reason "no tool can keep a dev server running", finish the command-level checks,
-   and stop as blocked. Never try to run the server through `shell`; it is killed
-   after 30 seconds and proves nothing.
+2. Dev server: `dev_server { action: "start", project: "<slug>" }`. It returns the
+   URL and keeps the server running after the turn, so the person can open it. Never
+   try to run the server through `shell`: that tool kills any command after 30 seconds
+   and proves nothing. If the tool is not available, DOD-5 cannot be proven — record it
+   as fail with that reason, finish the command-level checks, and stop as blocked.
 3. Browser: open the URL, wait for the page to load, run the checks at 1440 px wide,
    then resize to 400 px and run the responsive checks again. Read the console last.
-   When Review ends, stop the server through the same tool that started it.
+   Leave the server running for the person to look at; stop it with
+   `dev_server { action: "stop", ... }` only when the whole task is finished.
 
 Prefer the `playwright_browser_*` tools. The `chrome-devtools_*` equivalents work the
 same way: `evaluate_script` for `browser_evaluate`, `take_snapshot` for

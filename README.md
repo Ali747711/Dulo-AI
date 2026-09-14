@@ -214,6 +214,11 @@ npm start -- "What time is it and how many files are in src?"
 | `OPENROUTER_API_KEY` | **Yes** | — | OpenRouter secret API key |
 | `OPENROUTER_MODEL` | No | `nvidia/nemotron-3-ultra-550b-a55b:free` | Primary model identifier |
 | `OPENROUTER_URL` | No | `https://openrouter.ai/api/v1/chat/completions` | OpenRouter endpoint (or local testing stub) |
+| `DULO_WORKSPACE_DIR` | No | `workspace/` under the checkout | Where the agent builds projects. Every file tool is confined to it |
+| `DULO_SESSIONS_DIR` | No | `sessions/` under the checkout | Conversation data. A second harness MUST set this |
+| `DULO_CONFIG` | No | `dulo.config.json` in the checkout | Use a different config file |
+| `LLM_STALL_MS` | No | `90000` | Abort a model request that sends nothing for this long |
+| `LLM_TOTAL_MS` | No | `600000` | Abort a model request that lives longer than this |
 | `PORT` | No | `3001` | Harness HTTP / SSE server port |
 | `DULO_CLIENT_ORIGIN` | No | `http://localhost:5173` | Allowed browser origin for CORS |
 | `DULO_SESSIONS_DIR` | No | `sessions/` under the working directory | Where conversations are stored. **A second harness started for testing must set this to a throwaway directory** — a different `PORT` does not isolate data, so two instances started from the same checkout otherwise share one folder |

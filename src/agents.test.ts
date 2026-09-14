@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { applyToolPolicy, loadAgents } from "./agents.js";
+import { loadSkills } from "./skills.js";
 import { builtinTools } from "./tools/index.js";
 import type { Tool } from "./types.js";
 
@@ -77,5 +78,17 @@ test("every built-in tool a role names actually exists", () => {
       if (!on || name === "*" || external.test(name)) continue;
       assert.ok(builtin.has(name), `${agent.name} allows "${name}", which is not a built-in tool`);
     }
+  }
+});
+
+test("every shipped skill parses and has a description", async () => {
+  const skills = await loadSkills();
+  // A colon in an unquoted YAML description silently drops the whole file, so
+  // assert the ones that must exist are really there.
+  for (const name of ["frontend-definition-of-done", "frontend-greenfield-scaffold"]) {
+    const skill = skills.find((s) => s.name === name);
+    assert.ok(skill, `${name} loaded (check its YAML frontmatter if not)`);
+    assert.ok(skill.description.length > 10, `${name} has a description`);
+    assert.ok(skill.body.length > 200, `${name} has a body`);
   }
 });

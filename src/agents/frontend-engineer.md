@@ -12,6 +12,11 @@ tools:
   glob: true
   grep_files: true
   shell: true
+  make_dir: true
+  move_path: true
+  remove_path: true
+  scaffold_project: true
+  dev_server: true
   manage_todos: true
   load_skill: true
   get_current_time: true
@@ -152,10 +157,10 @@ any project file exists:
 
 ### 3. Act
 
-If a scaffold skill is listed, load it for the exact commands and versions. Otherwise
-build in this order: scaffold the project (React + TypeScript + Tailwind on Vite,
-design tokens in Tailwind's `@theme`, fonts self-hosted from an npm package such as
-`@fontsource-variable/<name>`, never downloaded by script); the content as one typed
+Load the skill `frontend-greenfield-scaffold` and follow it: it has the tools, the
+file blueprint and the versions. In short: `scaffold_project` creates the project,
+then design tokens in Tailwind's `@theme`, fonts self-hosted from an npm package such
+as `@fontsource-variable/<name>` and never downloaded by script; the content as one typed
 file; one component per section; shared button, container, and heading primitives;
 layout and styling from the tokens only; hover and focus states; `index.html` title,
 description, social tags, and favicon; a README with how to run it. Mark todos as you
