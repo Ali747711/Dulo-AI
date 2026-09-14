@@ -237,8 +237,11 @@ name-only policy) or `"auto"` (no questions at all — for unattended runs you h
 decided to trust). `approval.allowTools` and `approval.confirmTools` override single
 tools by name; `confirmTools` wins.
 
-Known limit: `node` and `npx` run code the harness has not inspected, so they are
-asked about rather than blocked. There is no sandbox.
+Known limits, stated plainly: `node`, `npx` and `python` run code the harness has not
+inspected, so they are asked about rather than blocked. `npm install` and `npm run` are
+allowed and can reach a shell through `package.json` scripts — that is the ordinary
+build path, and making it prompt would teach you to click yes without reading. There is
+no sandbox.
 | `PORT` | No | `3001` | Harness HTTP / SSE server port |
 | `DULO_CLIENT_ORIGIN` | No | `http://localhost:5173` | Allowed browser origin for CORS |
 | `DULO_SESSIONS_DIR` | No | `sessions/` under the working directory | Where conversations are stored. **A second harness started for testing must set this to a throwaway directory** — a different `PORT` does not isolate data, so two instances started from the same checkout otherwise share one folder |

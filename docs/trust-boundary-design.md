@@ -313,9 +313,24 @@ JSON, as today, and the buttons still work.
 
 Trust boundary. This is the boundary: everything `allowed` is confined to the workspace
 by `resolveSafe` or is a read. Everything that leaves — the network, other people's
-systems, money — is `ask` or `confirm`. The known hole is named rather than hidden:
-`node`/`npx` under `shell` run uninspected code, so they are `ask`, and nothing beyond
-that is claimed. A real sandbox is out of scope.
+systems, money — is `ask` or `confirm`. The known holes are named rather than hidden,
+and a real sandbox is out of scope:
+
+- `node`/`npx`/`python` under `shell` run uninspected code, so they are `ask`.
+- **`npm install` and `npm run <script>` are `allowed`, and they hand execution to
+  npm, which runs `package.json` scripts and dependencies' install scripts through a
+  real shell.** So an `allowed` call can reach a shell, which `shell` itself cannot.
+  This is deliberate: it is the ordinary build path Decision 4 says must run
+  uninterrupted, and a build that prompts is how people learn to click yes without
+  reading. It is the largest thing `allowed` covers, and closing it needs a sandbox or
+  `--ignore-scripts` (which breaks real installs), not a rule.
+- Browser `evaluate`/`evaluate_script` are `allowed` and run JavaScript in page
+  context, normally Dulo's own dev server. Review needs them; the alternative is a
+  wall of prompts.
+
+An adversarial review on 2026-09-14 (`docs/trust-boundary-review.md`) found four
+`allowed` rules that were wrong and one gate flaw; all are fixed, and this list is what
+survived it deliberately.
 
 Secrets. The GitHub PAT moves from `dulo.config.json` to `.env`; `.env.example` gains
 the variable name only. The owner's existing token should be rotated, since it has sat
