@@ -72,6 +72,16 @@ immediately. No deployment.
   (`src/tools/system.ts`): it cannot keep a server alive, and `npm install` can exceed
   the cap. Found while writing the definition-of-done skill in Step 1; until this
   exists, DOD-5 is an honest blocked stop.
+- The **shell allow-list** (`src/tools/system.ts`) lacks `mkdir`, `mv`, `cp`, and `rm`;
+  on the first real run the role spent four minutes writing `.cjs` scripts to create a
+  folder. Add the file basics (scoped to the workspace) or give the file tools a
+  `make_dir`/`move` pair. Related trust note for Step 3: `node <script>` runs
+  arbitrary code, including network access, so denying `http_request` in the profile
+  is not a network boundary; the tiers must treat `node`/`npx` as "can do anything".
+- An **LLM stall timeout** in `src/llm.ts`: today a request has no timeout, so an
+  upstream stream that opens and sends nothing hangs the turn until someone cancels.
+  Seen on the first real run of the Frontend Engineer (step 8, 28 minutes, one
+  ESTABLISHED connection, zero bytes). A long loop cannot be reliable without it.
 - A scaffold skill (`src/skills/frontend-greenfield-scaffold.md`) with the exact
   commands, versions, and project blueprint from `docs/frontend-engineer-research/
   04-brief-and-stack.md`, dated, so the profile never carries version numbers.
